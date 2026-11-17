@@ -27,7 +27,10 @@ export function SelectionPlus() {
   useEffect(() => {
     const onUp = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest('.plus-pop') || target?.closest('.plus-btn')) return;
+      // 编辑代码时的文本框、以及各种浮层，都不该触发「选中提问」
+      if (target?.closest('.plus-pop, .plus-btn, textarea, input, select, .edit-bar')) return;
+      // 编辑态下 pre 不存在，选中文本属于草稿，也没有稳定的字符偏移
+      if (target?.closest('.block.is-editing')) return;
 
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {

@@ -20,6 +20,11 @@ export function Canvas() {
     const el = rootRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      const inScroller = !!(e.target as HTMLElement | null)?.closest?.(
+        '.code-scroll, .code-edit, .answer-body',
+      );
+      // 代码区/回答区/编辑框自己可滚动时，滚轮应该滚内容，而不是平移画布
+      if (inScroller && !e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) {

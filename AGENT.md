@@ -27,7 +27,7 @@
 1. **代码块必须用 DOM 文本渲染，禁止用 Canvas 绘制。**
    Canvas 里的文字无法被浏览器原生选中，`window.getSelection()` 拿不到，整个「选中片段提问」的交互会直接崩掉。渲染结构是三层：DOM 节点层 + SVG 连线层 + CSS transform 视口层。
 2. **代码块是原子节点。** 拖拽以整块为单位，字符不可单独拖动。拖拽把手 = 标题栏 + 内边距区域；正文区域留给文本选择。二者用 pointer 事件分区，不靠猜。
-3. **锚点存语义坐标，不存像素。** `{blockId, startLine, startChar, endLine, endChar, quoteHash}`。代码块移动、缩放、改字号后，靠重算 Range 还原高亮，绝不存 x/y。
+3. **锚点存语义坐标，不存像素。** `{blockId, startOffset, endOffset, startLine, startChar, endLine, endChar, quote}`。代码块移动、缩放、改字号后，靠重算 Range 还原高亮，绝不存 x/y。
 4. **`<pre>` 内的文本必须保持"一字不差、一行不拆"。** 语法高亮只能加 `<span>` 包裹，行号必须是 `<pre>` 的兄弟节点，**禁止把代码按行拆成 `<div>`**。一旦拆分，`Range.toString()` 不跨块补换行，所有字符偏移整体错位，锚点体系立刻报废。
 5. **密钥永不落地明文。**
    - 用户填的模型 API Key：AES-GCM 落库，接口回显只给 `sk-****3f8a` 掩码，任何接口不得返回明文。
@@ -38,6 +38,10 @@
 8. **不引入 CRDT / OT。** v1 是单人编辑，画布存整体快照 + 乐观锁版本号。实时协作不做。
 9. **不引入重型 UI 框架。** 不装 Ant Design / MUI / Element。画布要的是像素级控制，组件库只会添乱。
 10. **不动 `.workbuddy/`。** 那是工作区元数据，不是项目代码，已在 `.gitignore` 里。
+11. **编辑代码后必须重定位锚点，禁止静默丢弃问答。**
+    - 文本改动后按 `anchor.quote` 在新文本里重新查找：找到 → 重算偏移并重测几何；找不到 → 标 `stale`，保留问答内容、连线改虚线、回答框显示「锚点失效」。
+    - 同名片段出现多次时，取**离原偏移最近**的一处（`nearestIndexOf`），不能直接 `indexOf` 取第一个，否则在上方插一行就会把锚点甩到别处。
+    - 绝不允许「改代码 = 删掉用户的问题」这种实现。
 
 ---
 
@@ -219,6 +223,17 @@ user_ai_settings(user_id pk, provider, base_url, model, api_key_cipher, api_key_
 - 拖拽：`pointerdown` 命中标题栏或内边距 → 进入拖动；命中正文 → 交给浏览器做文本选择
 - 拖动时 `user-select: none`，但**不改动文本节点**（改 DOM 会让已选中的 Range 失效）
 - 块内滚动超过 520px 时块内纵向滚动；横向上**不换行**，超宽则块内横向滚动
+
+**编辑与删除（`data-node="block"` 上的操作入口）**
+
+- 标题栏右侧两个按钮：`编辑`、`删除`。按钮区 `onPointerDown` 走 `closest('button, input, select, .del-confirm')` 早退，避免点按钮变成拖块
+- 编辑态把 `.code-scroll` 替换成 `.edit-area`（`.edit-gutter` + `textarea.code-edit`）+ `.edit-bar`（文件名 / 语言 / 清空 / 取消 / 保存）
+- **`.edit-area` 必须显式设高度**：`height = min(520, max(120, 行数*20 + 24))`。只有 textarea 设高度时，flex 容器会被行号栏内容撑高，长代码时整块被拉到几千像素
+- 行号栏 `overflow: hidden`，靠 `textarea.onscroll` 同步 `gutter.scrollTop`；编辑态行号栏不需要 sticky（横向滚动发生在 textarea 内部）
+- 快捷键：`Tab` 插入 4 空格、`Ctrl/Cmd+Enter` 保存、`Esc` 取消
+- 保存前统一 `normalizeCode`：`\r\n → \n`、去首尾空行与行尾空白，避免行号多出一行空白
+- 编辑态下**捕获不到选中提问**：`pre` 已被替换，选区属于草稿，没有稳定偏移
+- 删除是两段式：点「删除」→ 标题栏变红色确认条（带提问数量）→ 再点「删除」才真正删；取消恢复原状
 
 **行号栏（gutter）**
 
@@ -427,6 +442,11 @@ git push -u origin main
 | 自动分侧 | 代码块在屏幕右半时判为左侧；两侧都放得下时按选中位置就近 |
 | 手动换边 | 框换到另一侧并保持纵向位置，连线换到该侧边界 |
 | 背景切换 | 图案与底色独立生效，平移缩放时底纹与内容同步 |
+| 编辑代码并保存 | 行号数量等于新行数；已有问答的锚点随文本重定位（L4→L5），高亮与箭头同步下移一行 |
+| 编辑时 Esc / 取消 | 内容不变，不产生新提交 |
+| 清空并保存 | 显示「空代码块」占位，原有问答保留但标记「锚点失效」，连线变虚线 |
+| 删除代码块 | 二次确认后块、提问、回答框、连线一并消失 |
+| 代码区滚轮 | 滚动代码/回答内容，画布不平移；空白处滚轮仍平移画布 |
 
 当前列间距 `COL_OFFSET = 140`，回答框宽度 `BOX_WIDTH = 320`，避让间距 `BOX_GAP = 16`，
 侧栏宽度 `SIDEBAR_W = 216`（`layout.ts` 里必须与 CSS 同步）。

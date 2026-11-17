@@ -78,6 +78,7 @@ export function ConnectorLayer() {
                 fill="none"
                 stroke={active ? '#2f6fed' : '#9fb2d4'}
                 strokeWidth={active ? 1.8 : 1.2}
+                strokeDasharray={q.stale ? '4 4' : undefined}
                 opacity={opacity}
                 markerEnd="url(#arrow-head)"
               />

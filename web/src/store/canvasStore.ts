@@ -18,6 +18,7 @@ import {
   SIDEBAR_W,
   zoomAround,
 } from '../canvas/layout';
+import { buildAnchor } from '../canvas/anchors';
 
 export const SAMPLE_CODE = `class Solution {
     public int search(int[] nums, int target) {
@@ -34,6 +35,22 @@ export const SAMPLE_CODE = `class Solution {
 let seq = 1;
 const uid = (prefix: string) =>
   `${prefix}_${Date.now().toString(36)}${(seq++).toString(36)}`;
+
+/**
+ * 代码被编辑后，按原文片段在新文本里找位置。
+ * 同一段代码可能出现多次（例如两行 return -1;），所以取「离原偏移最近」的那一处，
+ * 而不是简单 indexOf 的第一个，否则在顶部插几行就会把锚点挪到别的同名片段上。
+ */
+function nearestIndexOf(content: string, quote: string, hint: number): number {
+  if (!quote) return -1;
+  let best = -1;
+  let idx = content.indexOf(quote);
+  while (idx >= 0) {
+    if (best < 0 || Math.abs(idx - hint) < Math.abs(best - hint)) best = idx;
+    idx = content.indexOf(quote, idx + 1);
+  }
+  return best;
+}
 
 function makeSampleDoc(): CanvasDoc {
   const block: CodeBlockModel = {
@@ -116,6 +133,13 @@ interface CanvasStore {
   }) => string;
   moveBlock: (id: string, dx: number, dy: number) => void;
   removeBlock: (id: string) => void;
+  /** 修改代码块文本/标题/语言；文本变化后按原文片段重新定位锚点 */
+  updateBlock: (id: string, patch: Partial<Pick<CodeBlockModel, 'content' | 'title' | 'language'>>) => void;
+  /** 文本变化后重测锚点几何（行内矩形与连线起点），由 CodeBlock 在布局阶段调用 */
+  refreshAnchors: (
+    blockId: string,
+    payload: Record<string, { rects: Rect4[]; point: { x: number; y: number } }>,
+  ) => void;
 
   addQuestion: (input: AddQuestionInput) => string;
   moveBox: (id: string, dx: number, dy: number) => void;
@@ -269,6 +293,77 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
             questions: d.questions.filter((q) => q.blockId !== id),
           },
         },
+      };
+    }),
+
+  updateBlock: (id, patch) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      const prev = d.blocks.find((b) => b.id === id);
+      if (!prev) return {};
+
+      const block: CodeBlockModel = { ...prev, ...patch };
+      const contentChanged = patch.content !== undefined && patch.content !== prev.content;
+
+      // 代码改了，锚点的字符偏移全部作废。用原文片段在新文本里重新定位：
+      // 找得到就重算偏移（几何交给 refreshAnchors 重测），找不到就标记 stale，
+      // 保留问答内容而不是静默删掉——用户的问题不该因为改代码而消失。
+      const questions = contentChanged
+        ? d.questions.map((q) => {
+            if (q.blockId !== id) return q;
+            const quote = q.anchor.quote;
+            const idx = nearestIndexOf(block.content, quote, q.anchor.startOffset);
+            if (idx < 0) return { ...q, stale: true, anchorRects: [] };
+            return {
+              ...q,
+              stale: false,
+              anchor: buildAnchor(block.content, idx, idx + quote.length),
+              anchorRects: [],
+            };
+          })
+        : d.questions;
+
+      return {
+        docs: {
+          ...s.docs,
+          [s.activeId]: {
+            ...d,
+            blocks: d.blocks.map((b) => (b.id === id ? block : b)),
+            questions,
+          },
+        },
+      };
+    }),
+
+  refreshAnchors: (blockId, payload) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      if (!d.blocks.some((b) => b.id === blockId)) return {};
+
+      let changed = false;
+      const questions = d.questions.map((q) => {
+        const next = payload[q.id];
+        if (!next || q.stale) return q;
+        const sameRects =
+          q.anchorRects.length === next.rects.length &&
+          q.anchorRects.every(
+            (r, i) =>
+              Math.abs(r.left - next.rects[i].left) < 0.5 &&
+              Math.abs(r.top - next.rects[i].top) < 0.5 &&
+              Math.abs(r.width - next.rects[i].width) < 0.5 &&
+              Math.abs(r.height - next.rects[i].height) < 0.5,
+          );
+        const samePoint =
+          Math.abs(q.anchorPoint.x - next.point.x) < 0.5 &&
+          Math.abs(q.anchorPoint.y - next.point.y) < 0.5;
+        if (sameRects && samePoint) return q;
+        changed = true;
+        return { ...q, anchorRects: next.rects, anchorPoint: next.point };
+      });
+
+      if (!changed) return {};
+      return {
+        docs: { ...s.docs, [s.activeId]: { ...d, questions: arrange(questions, d.blocks) } },
       };
     }),
 

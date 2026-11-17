@@ -1044,3 +1044,187 @@ button {
   display: flex;
   gap: 8px;
 }
+
+/* ---------- 代码块：编辑态 / 删除 ---------- */
+
+.block.is-editing {
+  border-color: rgba(47, 111, 237, 0.55);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.08);
+}
+
+.block-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: 6px;
+}
+
+.block-btn {
+  border: none;
+  background: transparent;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1;
+  color: #7b8aa3;
+  cursor: pointer;
+}
+
+.block-btn:hover {
+  background: #e9effa;
+  color: #33507f;
+}
+
+.block-btn.danger:hover {
+  background: #fdeaea;
+  color: var(--danger);
+}
+
+.del-confirm {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.del-confirm-text {
+  font-size: 10.5px;
+  color: #b42318;
+}
+
+.edit-area {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* 编辑态的行号栏不参与横向滚动，靠 textarea 的 scrollTop 同步纵向滚动 */
+.edit-gutter {
+  position: static;
+  left: auto;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.code-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  padding: 12px 16px 12px 10px;
+  background: #fff;
+  color: #23292f;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.code-edit::placeholder {
+  color: #b6c0d0;
+}
+
+.edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #fafbfd;
+  border-top: 1px solid #eef0f4;
+  border-radius: 0 0 9px 9px;
+}
+
+.edit-title {
+  flex: 1 1 90px;
+  min-width: 0;
+  height: 24px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 0 7px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+}
+
+.edit-title:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.1);
+}
+
+.edit-lang {
+  flex: none;
+  height: 24px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #44506a;
+  background: #fff;
+  outline: none;
+}
+
+.edit-btn {
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: #fff;
+  font-size: 11.5px;
+  color: #44506a;
+  cursor: pointer;
+}
+
+.edit-btn:hover {
+  border-color: #c9d6ea;
+  background: #f6f9ff;
+}
+
+.edit-btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: #8b98ad;
+}
+
+.edit-btn.ghost:hover {
+  background: #f1f4fa;
+  color: #5b6b85;
+}
+
+.edit-btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.edit-btn.primary:hover {
+  background: #255fd6;
+}
+
+.stale-tag {
+  color: #b42318;
+  background: #fdeaea;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+.code-empty {
+  padding: 26px 16px;
+  background: #fff;
+  border-radius: 0 0 10px 10px;
+  text-align: center;
+  font-size: 11.5px;
+  color: #a3aec2;
+}

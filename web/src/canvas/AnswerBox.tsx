@@ -113,9 +113,15 @@ export function AnswerBox({ q }: { q: Question }) {
             <span>
               {q.side === 'right' ? '右侧' : '左侧'} · {q.model}
             </span>
-            <span>
-              锚点 L{q.anchor.startLine + 1}:{q.anchor.startChar + 1}
-            </span>
+            {q.stale ? (
+              <span className="stale-tag" title="代码已修改，原文片段找不到了，高亮与箭头位置可能失准">
+                锚点失效
+              </span>
+            ) : (
+              <span>
+                锚点 L{q.anchor.startLine + 1}:{q.anchor.startChar + 1}
+              </span>
+            )}
           </div>
         </div>
       )}

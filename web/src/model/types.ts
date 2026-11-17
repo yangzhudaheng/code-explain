@@ -68,6 +68,8 @@ export interface Question {
   pinned: boolean;
   collapsed: boolean;
   model: string;
+  /** 代码被编辑后原文片段已不存在，锚点无法还原，只能保留问答不做高亮 */
+  stale?: boolean;
 }
 
 export interface CanvasDoc {
