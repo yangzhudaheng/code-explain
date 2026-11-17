@@ -7,7 +7,8 @@
 ## 当前进度
 
 - **M0 画布交互原型**：已完成（回答为模拟数据，无后端）
-- **M0.5 容器冒烟包**：已完成（待部署到 Vercel 验证 Hobby 是否允许容器）
+- **M0.5 容器冒烟包**：已完成。Vercel 容器可用（Hobby 也放行），但 `*.vercel.app` 域名在国内被污染，
+  已改用 Render 单容器部署（`Dockerfile` + `render.yaml`）
 - **画布增强**：背景切换、回答框左右分侧、代码行号、语法高亮 已完成
 - **代码块编辑**：编辑文本/文件名/语言、清空、删除代码块，改完自动重定位已有问答的锚点
 - **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（6 张表）+ Neon 连接串兼容 + `/api/db/ping` 自检
@@ -93,8 +94,9 @@ mvn test
 
 错误统一为 `{code, message, field?}`，`code` 取值见 `common/ErrorCode.java`。
 
-**为什么图形码答案存服务端**：存 cookie 或签名里等于把答案交给攻击者。代价是多实例需要粘性会话，
-本项目 Vercel 每实例单 JVM，暂不构成问题；将来横向扩容换成 Redis 即可。
+**为什么图形码答案存服务端**：存 cookie 或签名里等于把答案交给攻击者。代价是需要服务端有状态。
+单容器单实例暂时够用，但**实例休眠重启会清空内存里的答案**，用户正卡在提交那一步就会看到
+「验证码已过期」——所以验证码答案和数据频控计数最终要落库（见待办里的多实例/重启问题）。
 
 ## 画布接口（M3）
 
@@ -130,7 +132,38 @@ mvn test
 4. 页面隐藏 / 关闭 → 立即 flush，关闭时用 `fetch(..., {keepalive:true})` 尽力发出去。
 5. 登出 → 清空画布与加载锁，避免下一个账号看到上一个账号的内容。
 
-## 部署（GitHub → Vercel）
+## 部署（GitHub → Render，单容器同源）
+
+### 为什么最后没用 Vercel
+
+`*.vercel.app` 这个域名在国内被 DNS 污染（解析到 Facebook 的 `31.13.x.x` 网段），
+浏览器直接报 `ERR_NAME_NOT_RESOLVED`——**不是站点挂了，是域名本身打不开**。
+
+2026-11 实测：Vercel 的容器构建正常、服务正常启动、接口正常返回，但国内用户进不去。
+要在国内用 Vercel，唯一办法是绑一个没被污染的自定义域名。
+
+`*.onrender.com` 在同等条件下解析正常、直连可达，所以后端和前端一起搬到 Render。
+
+### 单容器：一个网址装下前端和后端
+
+根目录的 `Dockerfile` 是三阶段构建：
+
+1. Node 编译 `web/` → 静态文件
+2. Maven 编译 `api/`，并把上一步的产物拷进 `src/main/resources/static/`
+3. 运行镜像里只有一个 JAR
+
+部署出来是**一个服务、一个域名**：
+
+| 路径 | 来源 |
+|---|---|
+| `/`、`/assets/*` | 前端静态文件（Spring Boot 从 `static/` 提供） |
+| `/api/*` | Spring Boot 接口 |
+
+前后端天然同源，**不需要 CORS，Cookie 不用改 `SameSite`/`Domain`**。
+同一个镜像也能直接跑在 Koyeb / Fly.io / 自己的服务器上。
+
+> 拆成两个服务会变成两个域名 → 跨域 → Cookie 要 `SameSite=None` + HTTPS、后端要加 CORS，
+> 两处都容易出错。合成一个容器是这里最省事的选择。
 
 ### 1. 推代码
 
@@ -139,26 +172,35 @@ git remote add origin https://github.com/yangzhudaheng/code-explain.git
 git push -u origin main
 ```
 
-### 2. 部署后端容器（先做这一步）
+### 2. 在 Render 建服务
 
-1. Vercel → Add New → Project → 选 `code-explain` 仓库
-2. **Root Directory** 选 `api`
-3. Framework Preset 选 `Other`（Vercel 会自动识别 `Dockerfile.vercel`）
-4. Deploy，等待镜像构建完成
-5. 拿到域名后测试：
-   - `https://<api 域名>/api/ping`
-   - `https://<api 域名>/api/dev/stream`（验证 SSE 能撑多久）
+**Blueprint 方式（推荐，配置都在 `render.yaml` 里）**
 
-> 若提示当前计划不支持容器，说明 Hobby 未开放该能力，把后端改挂 Zeabur / Render 免费版即可，前端不动。
+1. render.com → `New` → `Blueprint` → 选 `code-explain` 仓库
+2. Render 自动读取 `render.yaml`，提示你填 7 个变量：
+   `DATABASE_URL`、`JWT_SECRET`、`APP_ENC_KEY`、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`、`APP_BASE_URL`
+3. 点 `Apply`，等构建（首次约 5~10 分钟）
 
-### 3. 部署前端
+**手动方式**
 
-1. Vercel → Add New → Project → 同一个仓库
-2. **Root Directory** 选 `web`，Framework 自动识别为 Vite
-3. 部署前把 `web/vercel.json` 里的 `<API_DOMAIN>` 换成第 2 步拿到的域名
-4. Deploy
+1. `New` → `Web Service` → 选仓库
+2. Runtime 选 `Docker`，Dockerfile Path 填 `./Dockerfile`
+3. Region 选 `Singapore`（离 Neon 最近），Plan 选 `Free`
+4. Health Check Path 填 `/api/ping`
+5. 环境变量照 `render.yaml` 逐个填
 
-前后端同源后，浏览器只访问前端域名，`/api/*` 由 Vercel 边缘转发到后端——不需要配 CORS，也不会有第三方 Cookie 问题。
+### 3. 部署后验证
+
+| 地址 | 期望 |
+|---|---|
+| `/api/ping` | `{"ok":true,...}` |
+| `/api/db/ping` | PostgreSQL 版本 + 迁移版本 + 表清单 |
+| `/` | 画布页面 |
+
+拿到域名后，把 Render 环境变量里的 `APP_BASE_URL` 改成 `https://<你的服务名>.onrender.com`。
+
+> **免费实例的代价**：15 分钟无访问会休眠，下次打开要等 30~60 秒冷启动（JVM 重新拉起）。
+> 想避免只能付费（约 $7/月）或上自己的服务器。
 
 ## 环境变量（后端，后续里程碑使用）
 
@@ -166,10 +208,10 @@ git push -u origin main
 
 | 变量 | 用途 |
 |---|---|
-| `DATABASE_URL` | Neon 连接串，`postgres://` 原样粘贴即可（推荐，Vercel 集成会自动注入） |
+| `DATABASE_URL` | Neon 连接串，`postgres://` 原样粘贴即可（Render 上需手动填，不会自动注入） |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | 备选写法，`DB_URL` 需为 `jdbc:postgresql://` |
 | `DB_OPTIONAL` | 仅容器冒烟用：`true` 时无数据库也能启动；正常部署保持未设置 |
-| `DB_POOL_SIZE` | 连接池大小，默认 4（Vercel 每实例一个 JVM，别调大） |
+| `DB_POOL_SIZE` | 连接池大小，默认 4；**线上填 2**（单容器 512MB 内存，池子开大只会更早 OOM） |
 | `JWT_SECRET` | 会话签名密钥，`openssl rand -base64 48`；**少于 32 字节会拒绝启动** |
 | `TOKEN_TTL` | 登录有效期，默认 `PT168H`（7 天） |
 | `COOKIE_SECURE` | 线上必须 `true`；本地 `http://localhost` 必须 `false` |

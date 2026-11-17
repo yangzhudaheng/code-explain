@@ -3,6 +3,8 @@ dist/
 dist-ssr/
 target/
 *.jar
+# 本地验证「前端产物打进后端」时产生的目录，构建时由 Dockerfile 生成，不该进仓库
+api/src/main/resources/static/
 .env
 .env.local
 .env.*.local

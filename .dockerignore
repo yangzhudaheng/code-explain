@@ -1,0 +1,12 @@
+# 构建上下文瘦身：这些都不该进镜像
+**/node_modules
+**/dist
+**/target
+.git
+.gitignore
+.workbuddy
+*.log
+.env
+**/.env
+README.md
+AGENT.md

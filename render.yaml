@@ -1,0 +1,50 @@
+# Render 蓝图：用 Blueprint 方式一键建服务（New → Blueprint → 选仓库）
+#
+# 也可以不用这个文件，直接在 dashboard 手动建 Web Service，效果一样。
+# 带 sync: false 的变量不会进仓库，创建时由 Render 提示你手动填。
+services:
+  - type: web
+    name: code-explain
+    runtime: docker
+    plan: free
+    # 离 Neon（ap-southeast-1）最近，能把数据库往返从 200ms 压到 10ms 级。
+    # 如果你的账号在免费计划下不支持这个区域，删掉这一行用默认即可。
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    # 探活用 API 而不是 /：/ 返回的是静态页，探活看不出后端和数据库是否就绪
+    healthCheckPath: /api/ping
+    autoDeploy: true
+    envVars:
+      # ---- 数据库 ----
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "2"
+
+      # ---- 会话与加密 ----
+      - key: JWT_SECRET
+        sync: false
+      - key: APP_ENC_KEY
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+
+      # ---- 邮件（QQ 邮箱 465 SSL）----
+      - key: SMTP_HOST
+        value: smtp.qq.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+      # ---- 站点地址（换成 Render 分配给你的域名）----
+      - key: APP_BASE_URL
+        sync: false
+
+      # 生产环境绝不能开
+      - key: CAPTCHA_DEBUG
+        value: "false"
