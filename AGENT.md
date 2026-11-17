@@ -62,9 +62,18 @@
 16. **`*.vercel.app` 域名在国内不可用，别再往 Vercel 上部署线上环境。**
     2026-11 实测：域名解析被污染到 `31.13.x.x`（Facebook 网段），浏览器报
     `ERR_NAME_NOT_RESOLVED`；容器本身能正常构建和启动，纯粹是域名打不开。
-    线上用 Render（`*.onrender.com` 实测解析与直连均正常）。
     将来若要回到 Vercel，前提是绑一个没被污染的自定义域名。
-17. **内存态（验证码答案、频控计数）在会休眠的平台上不可靠。**
+17. **免费海外容器平台都要绑卡，没有卡就别在这条路上耗。**
+    2026-11 实测：Render、Koyeb、Fly.io、Railway 均要求绑卡做身份验证（$1~$29 预授权）；
+    Northflank 定价页写 "No card needed"，但其帮助文档写明
+    `all users must add a payment method to start creating resources`。
+    因此线上默认走**国内轻量服务器**（支付宝付款、`IP:8080` 访问、不需要备案、不休眠），
+    方案见 `deploy/DEPLOY-服务器.md`，打包用 `deploy/build-package.sh`。
+18. **服务器上不做构建，本地打好包含前端的 jar 再上传。**
+    仓库是私有的（`git clone` 要 Token）、国内机器拉 Docker Hub 与 Maven Central 都不稳、
+    2G 内存同时跑 npm+mvn 有 OOM 风险——三个失败点合成一个，就是「上传 26MB 的 jar」。
+    `deploy/build-package.sh` 负责这条链路，别再在服务器上写「先 npm install 再 mvn」的步骤。
+19. **内存态（验证码答案、频控计数）在会休眠的平台上不可靠，单机也不能假设它永远在。**
     Render 免费实例 15 分钟无访问即休眠，重启后 Caffeine 里的答案全丢，
     用户会看到「验证码已过期」。**接 AI（M4）之前必须把这两样落库**，
     这是已知欠债，不是「以后再说」。

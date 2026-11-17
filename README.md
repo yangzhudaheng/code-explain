@@ -132,7 +132,14 @@ mvn test
 4. 页面隐藏 / 关闭 → 立即 flush，关闭时用 `fetch(..., {keepalive:true})` 尽力发出去。
 5. 登出 → 清空画布与加载锁，避免下一个账号看到上一个账号的内容。
 
-## 部署（GitHub → Render，单容器同源）
+## 部署
+
+> **当前推荐路径：国内轻量服务器**，见 [`deploy/DEPLOY-服务器.md`](deploy/DEPLOY-服务器.md)。
+> 原因：Render / Koyeb / Fly / Railway 的免费实例都要求绑信用卡验证身份（$1~$29 预授权），
+> 没有双币卡就走不通；轻量服务器支付宝付款、`IP:8080` 直接访问、不需要备案、不休眠。
+> 打包命令 `bash deploy/build-package.sh`，产物是带前端的 jar，服务器只装 JRE。
+>
+> 下面保留 Render 的完整流程，作为「以后有卡了」或「想换平台」的备选。
 
 ### 为什么最后没用 Vercel
 

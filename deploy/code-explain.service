@@ -1,0 +1,38 @@
+# systemd 服务单元：把 jar 托管成常驻进程
+# 安装位置：/etc/systemd/system/code-explain.service
+#
+# 用 systemd 而不是 nohup / screen 的原因：
+# 崩溃自动拉起、开机自启、日志进 journalctl、进程不随 SSH 断开而死。
+
+[Unit]
+Description=code-explain (Spring Boot, 前后端同源单进程)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 专用低权限账号，避免应用以 root 身份跑
+User=codeexplain
+Group=codeexplain
+WorkingDirectory=/opt/code-explain
+
+# 所有密钥从这个文件读，文件权限必须是 600
+EnvironmentFile=/opt/code-explain/app.env
+
+# 2G 内存的机器：堆 768M + Metaspace 192M，余下留给线程栈与直接内存。
+# 用 SerialGC 是因为只有 1 个 vCPU 时它比 G1 省 CPU、启动更快。
+Environment=JAVA_OPTS=-Xmx768m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC -Djava.awt.headless=true -Dfile.encoding=UTF-8
+
+# $JAVA_OPTS 不加花括号：systemd 会按空格拆成多个参数（${JAVA_OPTS} 会当成单个参数）
+ExecStart=/usr/bin/java $JAVA_OPTS -jar /opt/code-explain/code-explain.jar --server.port=8080
+
+Restart=always
+RestartSec=5
+# 正常停止（systemctl stop）时 JVM 收到 SIGTERM 退出码是 143，不当作失败
+SuccessExitStatus=143
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=code-explain
+
+[Install]
+WantedBy=multi-user.target

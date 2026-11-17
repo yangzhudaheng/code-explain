@@ -12,6 +12,8 @@ api/src/main/resources/static/
 .DS_Store
 Thumbs.db
 *.log
+# 部署产物（jar 里含前端产物，体积大，且 app.env 带真实密钥）
+dist-deploy/
 .idea/
 .vscode/
 .workbuddy/
