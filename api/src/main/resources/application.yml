@@ -1,9 +1,29 @@
 server:
   port: ${PORT:8080}
+  shutdown: graceful
 
 spring:
   application:
     name: code-explain-api
+
+  # 数据源由 DataSourceConfig 构造（要兼容 Neon 的 postgres:// 连接串），
+  # 这里不写 spring.datasource.*，避免和自定义 DataSource Bean 打架。
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+    # 迁移失败必须让启动失败，否则线上表结构和代码不一致
+    fail-on-missing-locations: true
+
+  jackson:
+    default-property-inclusion: non_null
+
+app:
+  db:
+    # true 只在「先验证 Vercel 容器能不能起」时用；正常部署必须为 false
+    optional: ${DB_OPTIONAL:false}
+    pool-size: ${DB_POOL_SIZE:4}
 
 management:
   endpoints:
@@ -13,7 +33,10 @@ management:
   endpoint:
     health:
       show-details: never
+      probes:
+        enabled: true
 
 logging:
   level:
     root: INFO
+    org.flywaydb: INFO

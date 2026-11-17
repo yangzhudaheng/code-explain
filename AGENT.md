@@ -63,10 +63,19 @@
 | 关注点 | 选择 |
 |---|---|
 | 语言/框架 | Java 21 + Spring Boot 3.3.x，Maven 单模块 |
-| 依赖 | `web`, `validation`, `data-jpa`, `flyway`, `caffeine`, `mail`, `spring-security-crypto`（只取 BCrypt，不引整个 Security 过滤器链） |
+| 依赖 | `web`, `validation`, `jdbc`（**不用 data-jpa**，理由见下）, `flyway`, `caffeine`, `mail`, `spring-security-crypto`（只取 BCrypt，不引整个 Security 过滤器链） |
 | 流式转发 | Java 21 虚拟线程 + `java.net.http.HttpClient` + `SseEmitter`（不引 WebFlux） |
 | 数据库 | PostgreSQL（Neon 免费版，Vercel Marketplace 一键集成） |
 | 迁移 | Flyway，`V1__init.sql` 起步，禁止手工改线上表 |
+
+> **与初版选型的偏差（已执行，记录在此）**
+> 1. `data-jpa` → `spring-boot-starter-jdbc`：画布结构整体存 `jsonb` 快照，实体映射收益低；
+>    且容器无状态、无二级缓存，JPA 的懒加载与会话边界只会制造坑。改显式 SQL 后，
+>    `JdbcTemplate` 足以覆盖全部场景，依赖更少、启动更快。
+> 2. `users.email` 不用 `citext` 扩展：改 `text` + `lower(email)` 唯一索引，语义等价，
+>    不依赖扩展权限（Neon 换库、将来换托管都不用重新申请扩展）。
+> 3. 测试用 `io.zonky.test:embedded-postgres` 拉真实 PostgreSQL。**不要在测试里用 H2**：
+>    迁移里有 jsonb、`::jsonb` 转换、部分索引、check 约束，H2 兼容模式跑不通，测出来的通过是假的。
 | 会话 | JWT HS256 放 **httpOnly + Secure + SameSite=Lax Cookie**（同源代理使 Cookie 可用，避免 localStorage 被 XSS 偷） |
 | 部署 | `Dockerfile.vercel`，监听 `$PORT` |
 
@@ -400,7 +409,7 @@ git push -u origin main
 |---|---|---|
 | **M0.5 可行性冒烟**（最高优先） | 最小 Spring Boot 容器 + `Dockerfile.vercel` 推 Vercel | 公网可访问 `/actuator/health`；确认 Hobby 允许容器；记录冷启动耗时与 SSE 是否可跑满 60s |
 | **M0 交互原型** | 纯前端单页，无后端，回答用假数据 | 粘贴代码成块、整块拖动、选中出加号、连线带问题标签、回答框避让、一键整理，全部可交互 |
-| **M1 后端骨架** | Spring Boot + Flyway + 本地 docker-compose(Postgres) | 本地起得来，`/actuator/health` 通，V1 建表成功 |
+| **M1 后端骨架** ✅ | Spring Boot + Flyway（V1: 6 张表）+ Neon 连接串兼容 | 内嵌 PG 跑真实迁移通过；`/api/db/ping` 返回 schema 版本与表清单；无库时可用 `DB_OPTIONAL=true` 启动 |
 | **M2 认证** | 图形码、邮件码、频控、登录、Cookie 会话 | 同邮箱 60s 冷却、同 IP 日限 10 次生效；错误码齐全 |
 | **M3 画布持久化** | 多画布 CRUD、快照保存、乐观锁 | 刷新不丢内容；两标签页同改触发 409 并提示 |
 | **M4 AI 问答** | Provider 抽象、SSRF 校验、加密存储、SSE | 6 个预设可切换；Key 掩码回显；内网地址被拒 |
@@ -418,11 +427,13 @@ git push -u origin main
 - [x] **M0 画布交互原型**（`web/`，模拟回答数据，已用无头浏览器逐项验证）
 - [x] **M0.5 冒烟包**（`api/`，`/api/ping` + `/api/dev/stream`）
 - [x] 画布增强：背景切换、回答框左右分侧、行号、语法高亮
-- [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点**
-- [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）
+- [x] 代码块编辑 / 删除 + 编辑后锚点重定位
+- [x] **M1 后端骨架**：Flyway V1（users / email_codes / canvases / questions / answers / user_ai_settings）、
+      数据库连接串归一化、`/api/db/ping` 自检；12 个测试（含真实 PG 迁移）全过
+- [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点（要用户操作）**
+- [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）← M2 开始前必须做
 - [ ] 域名（M5 前决定即可，仅影响国内访问）
-- [ ] M0 手感确认（用户交互验收）
-- [ ] M1 后端骨架（Spring Boot + Flyway + Postgres）
+- [ ] M2 认证：图形码 + 邮件码 + 频控 + Cookie 会话
 
 ### M0 已验证的行为（回归基线，改动后需复测）
 

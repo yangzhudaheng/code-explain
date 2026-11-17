@@ -10,13 +10,14 @@
 - **M0.5 容器冒烟包**：已完成（待部署到 Vercel 验证 Hobby 是否允许容器）
 - **画布增强**：背景切换、回答框左右分侧、代码行号、语法高亮 已完成
 - **代码块编辑**：编辑文本/文件名/语言、清空、删除代码块，改完自动重定位已有问答的锚点
-- M1~M6：未开始
+- **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（6 张表）+ Neon 连接串兼容 + `/api/db/ping` 自检；12 个测试全过
+- M2~M6：未开始
 
 ## 目录
 
 ```
 web/    React + TypeScript + Vite 前端（画布本体）
-api/    Spring Boot 3 / Java 21 后端（当前只有冒烟端点）
+api/    Spring Boot 3 / Java 21 后端（Flyway 迁移 + 数据库自检 + 冒烟端点）
 ```
 
 ## 本地运行前端
@@ -44,6 +45,32 @@ npm run dev     # http://localhost:5173
 | 代码块标题栏「编辑」 | 就地编辑代码：Tab 缩进 4 空格、Ctrl+Enter 保存、Esc 取消；可改文件名与语言 |
 | 代码块标题栏「删除」 | 二次确认后删除整块，连带该块的提问与回答框 |
 | 保存编辑后 | 已有问答按原文片段重新定位，高亮与箭头跟随；原文片段被删掉则标记「锚点失效」 |
+
+## 本地运行后端
+
+需要 JDK 21 + Maven。数据库用 Neon 或本地 Postgres 都行。
+
+```bash
+cd api
+export DATABASE_URL='postgres://user:pass@ep-xxx.neon.tech/neondb?sslmode=require'
+mvn spring-boot:run       # http://localhost:8080
+curl localhost:8080/api/db/ping
+```
+
+`/api/db/ping` 会返回连接耗时、PostgreSQL 版本、已应用的迁移版本和表清单——**部署后第一件事就是打开它**，
+比看日志快。
+
+只想验证「容器能不能起来」、还没接数据库时：
+
+```bash
+DB_OPTIONAL=true mvn spring-boot:run     # 跳过迁移，其余接口正常；/api/db/ping 返回 503 并说明原因
+```
+
+跑测试（不依赖本机装 Postgres，测试内部会拉起一个内嵌实例执行真实迁移）：
+
+```bash
+mvn test
+```
 
 ## 部署（GitHub → Vercel）
 
@@ -81,7 +108,10 @@ git push -u origin main
 
 | 变量 | 用途 |
 |---|---|
-| `DB_URL` / `DB_USER` / `DB_PASSWORD` | Neon Postgres 连接 |
+| `DATABASE_URL` | Neon 连接串，`postgres://` 原样粘贴即可（推荐，Vercel 集成会自动注入） |
+| `DB_URL` / `DB_USER` / `DB_PASSWORD` | 备选写法，`DB_URL` 需为 `jdbc:postgresql://` |
+| `DB_OPTIONAL` | 仅容器冒烟用：`true` 时无数据库也能启动；正常部署保持未设置 |
+| `DB_POOL_SIZE` | 连接池大小，默认 4（Vercel 每实例一个 JVM，别调大） |
 | `JWT_SECRET` | 会话签名，≥32 字节随机串 |
 | `APP_ENC_KEY` | 用户模型 API Key 的加密主密钥（AES-GCM，Base64） |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | QQ 邮箱 465 SSL |
