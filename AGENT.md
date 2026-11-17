@@ -430,6 +430,8 @@ git push -u origin main
 - [x] 代码块编辑 / 删除 + 编辑后锚点重定位
 - [x] **M1 后端骨架**：Flyway V1（users / email_codes / canvases / questions / answers / user_ai_settings）、
       数据库连接串归一化、`/api/db/ping` 自检；12 个测试（含真实 PG 迁移）全过
+- [x] **代码已推送到 GitHub**：`yangzhudaheng/code-explain` 私有仓库，42 个文件，
+      远端 HEAD 与本地一致（建仓时的空历史已用 `--allow-unrelated-histories` 合并，未覆盖任何内容）
 - [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点（要用户操作）**
 - [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）← M2 开始前必须做
 - [ ] 域名（M5 前决定即可，仅影响国内访问）
