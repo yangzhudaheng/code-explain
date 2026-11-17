@@ -11,6 +11,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /** 把异常统一成 {@link ApiError}，避免前端面对 Spring 默认的 Whitelabel 错误结构。 */
 @RestControllerAdvice
@@ -42,6 +44,19 @@ public class GlobalExceptionHandler {
             MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ApiError> handleBadRequest(Exception ex) {
         return ResponseEntity.badRequest().body(ApiError.of(ErrorCode.VALIDATION_FAILED));
+    }
+
+    /**
+     * 路径没有对应端点时返回 404。
+     *
+     * <p>Spring 6.1 起未映射路径抛 {@link NoResourceFoundException}，它本身是 RuntimeException，
+     * 会被下面的 {@code Exception} 兜底接住变成 500 —— 访问域名根路径看到「服务器内部错误」，
+     * 很容易被误判成部署失败。这里显式拦回来，语义才是对的。
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public ResponseEntity<ApiError> handleNotFound(Exception ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of(ErrorCode.NOT_FOUND));
     }
 
     @ExceptionHandler(Exception.class)

@@ -25,6 +25,7 @@ public enum ErrorCode {
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "邮箱或密码错误"),
 
     // 404 —— 资源不存在，或不属于当前用户（不区分，避免探测别人的 id）
+    NOT_FOUND(HttpStatus.NOT_FOUND, "接口不存在"),
     CANVAS_NOT_FOUND(HttpStatus.NOT_FOUND, "画布不存在或已被删除"),
 
     // 409 —— 状态冲突
