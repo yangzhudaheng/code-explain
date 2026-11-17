@@ -1,0 +1,18 @@
+# Vercel 容器构建入口：文件名必须是 Dockerfile.vercel，放在项目根目录（本项目根目录 = api/）
+# 约束：进程必须监听 $PORT（Vercel 会注入），且不能依赖本地磁盘持久化
+
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY pom.xml .
+RUN mvn -q -B -DskipTests dependency:go-offline
+COPY src ./src
+RUN mvn -q -B -DskipTests package
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /src/target/*.jar app.jar
+
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=72 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Dspring.main.lazy-initialization=true"
+EXPOSE 8080
+
+CMD ["sh", "-c", "java $JAVA_OPTS -jar app.jar --server.port=${PORT:-8080}"]

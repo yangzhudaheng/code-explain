@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-ssr/
+target/
+*.jar
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+.workbuddy/
+*.iml
