@@ -19,6 +19,7 @@ import {
   zoomAround,
 } from '../canvas/layout';
 import { buildAnchor } from '../canvas/anchors';
+import { canvasApi, type CanvasDetail } from '../api/canvas';
 
 export const SAMPLE_CODE = `class Solution {
     public int search(int[] nums, int target) {
@@ -31,6 +32,9 @@ export const SAMPLE_CODE = `class Solution {
         return nums[lo] == target ? lo : -1;
     }
 }`;
+
+/** 保存状态：UI 只认这一个字段，不自己拼「有没有未保存改动」 */
+export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'conflict' | 'error';
 
 let seq = 1;
 const uid = (prefix: string) =>
@@ -52,48 +56,33 @@ function nearestIndexOf(content: string, quote: string, hint: number): number {
   return best;
 }
 
-function makeSampleDoc(): CanvasDoc {
-  const block: CodeBlockModel = {
-    id: 'b_sample',
-    x: 80,
-    y: 60,
-    width: 520,
-    title: 'Solution.java',
-    language: 'java',
-    content: SAMPLE_CODE,
+/** 服务端快照 → 内存模型。缺字段一律回落到默认值，坏数据不该让整页白屏。 */
+export function docFromDetail(detail: CanvasDetail): CanvasDoc {
+  const data = (detail.data ?? {}) as {
+    blocks?: CodeBlockModel[];
+    questions?: Question[];
+    viewport?: Viewport;
+    bg?: CanvasBg;
   };
+  const base = emptyDoc(detail.id, detail.title);
   return {
-    id: 'doc_main',
-    title: '二分查找 · 边界问题',
-    blocks: [block],
-    questions: [],
-    viewport: { x: 250, y: 70, zoom: 1 },
-    bg: { pattern: 'dot', tone: 'warm' },
+    ...base,
+    version: detail.version,
+    blocks: Array.isArray(data.blocks) ? data.blocks : [],
+    questions: Array.isArray(data.questions)
+      ? data.questions.map((q) => ({
+          ...q,
+          // 行内矩形是按像素测出来的缓存，刷新后由 CodeBlock 重新测量；
+          // 存进快照会让体积翻几倍，而且换了字体/缩放后反而是错的
+          anchorRects: [],
+          // 上次关页面时还在流式输出，这次不可能续上，别让 UI 永远转圈
+          status: q.status === 'streaming' ? (q.answer ? 'done' : 'error') : q.status,
+        }))
+      : [],
+    viewport: data.viewport ?? base.viewport,
+    bg: data.bg ?? base.bg,
   };
 }
-
-const sampleDoc = makeSampleDoc();
-const secondDoc: CanvasDoc = {
-  ...emptyDoc('doc_second', '滑动窗口 · 草稿'),
-  blocks: [
-    {
-      id: 'b_second',
-      x: 80,
-      y: 60,
-      width: 520,
-      title: 'Window.java',
-      language: 'java',
-      content: `int left = 0, max = 0;
-for (int right = 0; right < n; right++) {
-    // 收缩窗口
-    while (left <= right && !valid()) left++;
-    max = Math.max(max, right - left + 1);
-}
-return max;`,
-    },
-  ],
-  viewport: { x: 250, y: 70, zoom: 1 },
-};
 
 export interface AddQuestionInput {
   blockId: string;
@@ -111,7 +100,18 @@ interface CanvasStore {
   activeId: string;
   hoverQid: string | null;
 
+  saveState: SaveState;
+  saveError: string | null;
+  lastSavedAt: number | null;
+
   doc: () => CanvasDoc;
+
+  /** 首次从服务端拉回全部画布后一次性灌入 */
+  hydrate: (docs: CanvasDoc[], activeId?: string) => void;
+  replaceDoc: (doc: CanvasDoc) => void;
+  /** 只把版本号推上去，不覆盖用户在这期间的新改动 */
+  patchVersion: (id: string, version: number) => void;
+  setSaveState: (state: SaveState, error?: string | null) => void;
 
   setViewport: (v: Viewport) => void;
   panBy: (dx: number, dy: number) => void;
@@ -119,7 +119,9 @@ interface CanvasStore {
   resetView: () => void;
 
   setActive: (id: string) => void;
-  addCanvas: () => void;
+  addCanvas: () => Promise<void>;
+  removeCanvas: (id: string) => Promise<void>;
+  renameCanvas: (id: string, title: string) => void;
   setBg: (patch: Partial<CanvasBg>) => void;
   /** 回答框落到可视区之外时，最小幅度平移画布把它拉回来 */
   ensureVisible: (id: string, containerRect: DOMRect) => void;
@@ -155,13 +157,68 @@ interface CanvasStore {
   setHover: (id: string | null) => void;
 }
 
+/** 新建画布时用的初始快照：一个示例代码块，让用户打开就有东西可点 */
+export function starterDoc(title: string) {
+  return {
+    viewport: { x: 250, y: 70, zoom: 1 },
+    bg: { pattern: 'dot', tone: 'warm' },
+    blocks: [
+      {
+        id: 'b_sample',
+        x: 80,
+        y: 60,
+        width: 520,
+        title: 'Solution.java',
+        language: 'java',
+        content: SAMPLE_CODE,
+      },
+    ],
+    questions: [],
+  };
+}
+
 export const useCanvas = create<CanvasStore>((set, get) => ({
-  docs: { [sampleDoc.id]: sampleDoc, [secondDoc.id]: secondDoc },
-  order: [sampleDoc.id, secondDoc.id],
-  activeId: sampleDoc.id,
+  // 首屏从服务端灌数据，这里不能放示例：否则未登录/加载中会先渲染出一份假画布
+  docs: {},
+  order: [],
+  activeId: '',
   hoverQid: null,
 
+  saveState: 'idle',
+  saveError: null,
+  lastSavedAt: null,
+
   doc: () => get().docs[get().activeId],
+
+  hydrate: (list, activeId) => {
+    const docs: Record<string, CanvasDoc> = {};
+    for (const d of list) docs[d.id] = d;
+    const first = activeId && docs[activeId] ? activeId : list[0]?.id ?? '';
+    set({
+      docs,
+      order: list.map((d) => d.id),
+      activeId: first,
+      hoverQid: null,
+      saveState: 'saved',
+      lastSavedAt: Date.now(),
+      saveError: null,
+    });
+  },
+
+  replaceDoc: (doc) =>
+    set((s) => ({
+      docs: { ...s.docs, [doc.id]: doc },
+      order: s.order.includes(doc.id) ? s.order : [doc.id, ...s.order],
+    })),
+
+  patchVersion: (id, version) =>
+    set((s) => {
+      const d = s.docs[id];
+      if (!d || d.version === version) return {};
+      return { docs: { ...s.docs, [id]: { ...d, version } } };
+    }),
+
+  setSaveState: (state, error = null) => set({ saveState: state, saveError: error }),
 
   setViewport: (v) =>
     set((s) => {
@@ -200,15 +257,65 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
 
   setActive: (id) => set({ activeId: id, hoverQid: null }),
 
-  addCanvas: () => {
-    const id = uid('doc');
+  addCanvas: async () => {
     const n = get().order.length + 1;
+    // 先落库再进内存：本地先插一个临时 id 会让「保存时才发现没落库」的补丁到处漏
+    const created = await canvasApi.create({
+      title: `未命名画布 ${n}`,
+      data: starterDoc(`未命名画布 ${n}`),
+    });
+    const doc = docFromDetail(created);
     set((s) => ({
-      docs: { ...s.docs, [id]: emptyDoc(id, `未命名画布 ${n}`) },
-      order: [...s.order, id],
-      activeId: id,
+      docs: { ...s.docs, [doc.id]: doc },
+      order: [doc.id, ...s.order],
+      activeId: doc.id,
+      hoverQid: null,
+      saveState: 'saved',
+      lastSavedAt: Date.now(),
+      saveError: null,
     }));
   },
+
+  removeCanvas: async (id) => {
+    await canvasApi.remove(id);
+    const s = get();
+    const order = s.order.filter((x) => x !== id);
+    const docs = { ...s.docs };
+    delete docs[id];
+
+    if (order.length > 0) {
+      set({
+        docs,
+        order,
+        activeId: s.activeId === id ? order[0] : s.activeId,
+        hoverQid: null,
+      });
+      return;
+    }
+
+    // 删的是最后一个：先把新画布建好再一次性替换。
+    // 中间不能出现「docs 为空」的已提交状态，否则 Canvas 会拿到 undefined 直接崩。
+    const title = '未命名画布 1';
+    const created = await canvasApi.create({ title, data: starterDoc(title) });
+    const doc = docFromDetail(created);
+    set({
+      docs: { [doc.id]: doc },
+      order: [doc.id],
+      activeId: doc.id,
+      hoverQid: null,
+      saveState: 'saved',
+      saveError: null,
+      lastSavedAt: Date.now(),
+    });
+  },
+
+  renameCanvas: (id, title) =>
+    set((s) => {
+      const d = s.docs[id];
+      const next = title.trim();
+      if (!d || !next || next === d.title) return {};
+      return { docs: { ...s.docs, [id]: { ...d, title: next } } };
+    }),
 
   setBg: (patch) =>
     set((s) => {

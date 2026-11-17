@@ -159,6 +159,7 @@ export function emptyDoc(id: string, title: string): CanvasDoc {
   return {
     id,
     title,
+    version: 0,
     blocks: [],
     questions: [],
     viewport: { x: 120, y: 120, zoom: 1 },

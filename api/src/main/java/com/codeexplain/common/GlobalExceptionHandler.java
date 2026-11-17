@@ -21,7 +21,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiError> handleApi(ApiException ex) {
         return ResponseEntity.status(ex.code().status())
-                .body(ApiError.of(ex.code(), ex.getMessage()));
+                .body(ApiError.of(ex.code(), ex.getMessage(), ex.field()));
     }
 
     /** @Valid 校验失败：取第一个字段错误，前端可直接定位到输入框。 */

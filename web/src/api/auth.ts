@@ -1,53 +1,8 @@
-/** 后端错误响应体，与 Java 侧 ApiError 一一对应 */
-export interface ApiErrorBody {
-  code: string;
-  message: string;
-  field?: string | null;
-}
+import { HttpError, request, type ApiErrorBody } from './client';
 
-export class HttpError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly field?: string;
-
-  constructor(status: number, body: ApiErrorBody | null) {
-    super(body?.message || '请求失败，请稍后重试');
-    this.name = 'HttpError';
-    this.status = status;
-    this.code = body?.code || 'UNKNOWN';
-    this.field = body?.field ?? undefined;
-  }
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    // 会话在 httpOnly Cookie 里，必须带上凭据
-    credentials: 'include',
-    ...init,
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  const raw = await res.text();
-  let data: unknown = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    // 后端异常时可能返回 HTML 错误页，不当作 JSON
-    data = null;
-  }
-
-  if (!res.ok) {
-    throw new HttpError(res.status, (data as ApiErrorBody) ?? null);
-  }
-  return data as T;
-}
+/** 老代码从 auth 里引 HttpError，这里转出去，避免每个引用点都改一遍 */
+export { HttpError };
+export type { ApiErrorBody };
 
 export interface SessionUser {
   id: string;

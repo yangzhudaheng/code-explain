@@ -4,19 +4,29 @@ package com.codeexplain.common;
 public class ApiException extends RuntimeException {
 
     private final ErrorCode code;
+    /** 出错的字段名，用于前端把提示定位到具体输入项；没有则为 null。 */
+    private final String field;
 
     public ApiException(ErrorCode code) {
-        super(code.defaultMessage());
-        this.code = code;
+        this(code, code.defaultMessage(), null);
     }
 
     public ApiException(ErrorCode code, String message) {
+        this(code, message, null);
+    }
+
+    public ApiException(ErrorCode code, String message, String field) {
         super(message);
         this.code = code;
+        this.field = field;
     }
 
     public ErrorCode code() {
         return code;
+    }
+
+    public String field() {
+        return field;
     }
 
     public static ApiException of(ErrorCode code) {

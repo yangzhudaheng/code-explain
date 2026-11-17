@@ -63,6 +63,12 @@ app:
   mail:
     from: ${SMTP_FROM:}
 
+  canvas:
+    # 每个账号的画布上限：防「刷账号塞库」，正常使用 50 个够
+    max-per-user: ${CANVAS_MAX_PER_USER:50}
+    # 单次保存的快照上限 2MB（Vercel 函数请求体上限是 4.5MB，留出 JSON 包装的余量）
+    max-data-bytes: ${CANVAS_MAX_DATA_BYTES:2097152}
+
 management:
   endpoints:
     web:

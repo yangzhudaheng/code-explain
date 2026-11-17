@@ -24,8 +24,16 @@ public enum ErrorCode {
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "请先登录"),
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "邮箱或密码错误"),
 
+    // 404 —— 资源不存在，或不属于当前用户（不区分，避免探测别人的 id）
+    CANVAS_NOT_FOUND(HttpStatus.NOT_FOUND, "画布不存在或已被删除"),
+
     // 409 —— 状态冲突
     EMAIL_TAKEN(HttpStatus.CONFLICT, "该邮箱已注册"),
+    CANVAS_VERSION_CONFLICT(HttpStatus.CONFLICT, "画布已在别处被修改，请重新加载后再保存"),
+    CANVAS_LIMIT_REACHED(HttpStatus.CONFLICT, "画布数量已达上限，请先删除不用的画布"),
+
+    // 413 —— 请求体太大
+    CANVAS_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "画布内容过大，保存失败"),
 
     // 429 —— 触发频控
     RATE_LIMITED_EMAIL(HttpStatus.TOO_MANY_REQUESTS, "该邮箱请求过于频繁，请 60 秒后再试"),

@@ -48,6 +48,12 @@
     - `MigrationTest` 保留一条护栏用例（断言 `host(inet_server_addr())` 是本机回环），
       任何人把测试指向远端时它会在 10 毫秒内失败。
     - 测试也不用真实 SMTP：用 `@SpyBean` 截获验证码，测试永远不该往真实邮箱投递。
+13. **首屏加载必须幂等。** React StrictMode 在开发环境会把 effect 跑两遍，
+    `loadWorkspace()` 必须有共享 Promise 去重，否则「新账号首次进入」会并发创建两个示例画布
+    （表现为侧栏莫名多出一个同名画布）。任何「加载时顺手创建数据」的逻辑都要按这条检查。
+14. **删除 / 切换画布不得提交空状态。** `docs` 里没有当前画布时，`Canvas` 的解构会直接崩。
+    删最后一个画布要「先建好新的再一次性替换」，不能在中间 `set({docs: {}})` 留一帧空态；
+    `Canvas` 自身也要有 `if (!doc)` 兜底。
 
 ---
 
@@ -163,26 +169,30 @@ code-explain/
 │   ├── vercel.json             # rewrites
 │   └── src/
 │       ├── canvas/             # 画布核心，与业务无关
-│       │   ├── Viewport.tsx    # 平移/缩放
-│       │   ├── CodeBlock.tsx   # 原子代码块
+│       │   ├── Canvas.tsx      # 视口、平移缩放、装配各层
+│       │   ├── CodeBlock.tsx   # 原子代码块（含行号、高亮、编辑）
 │       │   ├── SelectionPlus.tsx
 │       │   ├── ConnectorLayer.tsx
 │       │   ├── AnswerBox.tsx
 │       │   ├── anchors.ts      # 字符偏移 ↔ Range 互转
+│       │   ├── workspace.ts    # 首屏加载画布、首次示例问答注入
 │       │   └── layout.ts       # 避让与自动整理
-│       ├── pages/              # 登录/注册/画布列表
-│       ├── api/                # fetch 封装
+│       ├── ui/                 # 登录页、侧栏、工具栏
+│       ├── api/                # client.ts（统一 fetch/HttpError）+ auth.ts + canvas.ts
 │       └── store/
+│           ├── canvasStore.ts  # 画布状态与全部交互动作
+│           ├── persist.ts      # 防抖自动保存、409 冲突处理
+│           └── sessionStore.ts
 └── api/
     ├── Dockerfile.vercel
     ├── pom.xml
     └── src/main/
         ├── java/com/codeexplain/
         │   ├── auth/           # 图形码、邮件码、登录
-        │   ├── canvas/         # 画布 CRUD
-        │   ├── qa/             # 问题、回答、SSE
-        │   ├── ai/             # Provider 抽象、SSRF 校验、加密
-        │   └── common/         # 异常、频控、JWT
+        │   ├── canvas/         # 画布 CRUD + 乐观锁
+        │   ├── qa/             # M4：问题、回答、SSE
+        │   ├── ai/             # M4：Provider 抽象、SSRF 校验、加密
+        │   └── common/         # 异常、错误码、JWT
         └── resources/
             ├── application.yml
             └── db/migration/V1__init.sql
@@ -192,34 +202,57 @@ code-explain/
 
 ## 5. 数据模型
 
-结构化数据（代码块、位置）走 `canvases.data` JSONB；问答走关系表（便于查询、重答、审计）。
+**画布 = 一整块快照**（`canvases.data` JSONB），问答的展示态也在里面；
+`questions` / `answers` 两张关系表留给 M4 存 AI 调用记录（审计、重答、token 统计），
+不参与渲染回读。理由见第 12 节最后几条。
 
 ```sql
-users(id uuid pk, email citext unique, password_hash, status, created_at, email_verified_at)
+users(id uuid pk, email text, lower(email) 唯一索引, password_hash, status, created_at, email_verified_at)
 email_codes(id uuid, email, code_hash, purpose, expires_at, consumed_at, ip, attempts)
 canvases(id uuid, user_id, title, data jsonb, version int default 0, created_at, updated_at, deleted_at)
-questions(id uuid, canvas_id, block_id, anchor jsonb, text, box_x, box_y, pinned bool, created_at)
-answers(id uuid, question_id, content text, status, model, prompt_tokens, completion_tokens, created_at)
+questions(id uuid, canvas_id, block_id, anchor jsonb, text, box_x, box_y, pinned bool, created_at)  -- M4 用
+answers(id uuid, question_id, content text, status, model, prompt_tokens, completion_tokens, created_at) -- M4 用
 user_ai_settings(user_id pk, provider, base_url, model, api_key_cipher, api_key_mask, extra jsonb, updated_at)
 ```
 
-`canvases.data` 结构：
+`canvases.data` 结构（M3 实际写入的形态）：
 
 ```json
 {
-  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "viewport": { "x": 250, "y": 70, "zoom": 1 },
+  "bg": { "pattern": "dot", "tone": "warm" },
   "blocks": [
     {
-      "id": "b_01",
-      "x": 120, "y": 80,
-      "width": 560,
+      "id": "b_sample",
+      "x": 80, "y": 60,
+      "width": 520,
       "title": "Solution.java",
       "language": "java",
       "content": "class Solution {\n  ...\n}"
     }
+  ],
+  "questions": [
+    {
+      "id": "q_lx8f2a",
+      "blockId": "b_sample",
+      "anchor": { "startOffset": 96, "endOffset": 111, "quote": "while (lo < hi)", "startLine": 4, "startChar": 8, "endLine": 4, "endChar": 23 },
+      "anchorPoint": { "x": 400, "y": 150 },
+      "text": "这里为什么用 lo < hi？",
+      "answer": "...",
+      "status": "done",
+      "boxX": 820, "boxY": 126, "boxH": 220,
+      "side": "right",
+      "sideMode": "auto",
+      "pinned": false,
+      "collapsed": false,
+      "model": "mock-model"
+    }
   ]
 }
 ```
+
+**故意不落库的字段**：`anchorRects`（逐行像素矩形，几 KB 且能由 `anchor` + 文本重算，
+刷新后 `CodeBlock` 会用 `measureAnchor` 重新测量）。快照里出现像素矩形是错误做法。
 
 `anchor` 结构（**像素无关**）：
 
@@ -352,32 +385,50 @@ user_ai_settings(user_id pk, provider, base_url, model, api_key_cipher, api_key_
 
 ## 7. API 契约
 
+以下为**已实现**的部分（M2 + M3），与设计稿的差异已在备注里说明。
+
 ```
-POST   /api/auth/captcha                    → {captchaId, imageBase64}
-POST   /api/auth/email-code                 {email, captchaId, captchaInput}
-POST   /api/auth/register                   {email, code, password}
-POST   /api/auth/login                      {email, password} → Set-Cookie
-POST   /api/auth/logout
-GET    /api/me                              → {id, email}
+GET    /api/auth/captcha                    → {id, image}          // image 为 data:image/png;base64
+POST   /api/auth/email-code                 {email, captchaId, captchaCode} → {sent, devMode, cooldownSeconds}
+GET    /api/auth/policy                     → {emailCooldownSeconds, codeTtlMinutes, maxCodeAttempts, maxPerIpDaily, minPasswordLength}
+POST   /api/auth/register                   {email, code, password, displayName} → Set-Cookie + {id, email, ...}
+POST   /api/auth/login                      {email, password} → Set-Cookie + 同上
+POST   /api/auth/logout                     → 204 + 清 Cookie
+GET    /api/auth/me                         → {id, email, displayName, emailVerified, createdAt}
 
-GET    /api/canvases                        → [{id, title, updatedAt}]
-POST   /api/canvases                        {title}
-PATCH  /api/canvases/{id}                   {title}
-DELETE /api/canvases/{id}
-GET    /api/canvases/{id}                   → {data, version}
-PUT    /api/canvases/{id}/data              {data, version}  // 乐观锁，版本冲突返回 409
+GET    /api/canvases                        → [{id, title, version, updatedAt, blockCount, questionCount}]
+POST   /api/canvases                        {title?, data?} → 201 {id, title, data, version}
+GET    /api/canvases/{id}                   → {id, title, data, version, createdAt, updatedAt}
+PUT    /api/canvases/{id}                   {title, data, baseVersion} → 200 新版本；版本不一致 409
+DELETE /api/canvases/{id}                   → 204（软删，deleted_at 非空）
+```
 
-POST   /api/canvases/{id}/questions         {blockId, anchor, text} → {questionId, boxX, boxY}
+M4 待加（尚未实现）：
+
+```
+POST   /api/canvases/{id}/questions         {blockId, anchor, text} → {questionId}
 GET    /api/questions/{id}/answer           SSE: event=delta|done|error
-PATCH  /api/questions/{id}                  {boxX, boxY, pinned}
-DELETE /api/questions/{id}
-
 GET    /api/me/ai-settings                  → {provider, baseUrl, model, apiKeyMask}
 PUT    /api/me/ai-settings                  {provider, baseUrl, model, apiKey?}
 POST   /api/me/ai-settings/test             → {ok, latencyMs, error?}
 ```
 
-统一错误体：`{ "code": "RATE_LIMITED", "message": "请 60 秒后再试" }`，前端按 `code` 出中文提示。
+**设计稿与实现的偏差**：
+
+| 设计稿 | 实现 | 原因 |
+|---|---|---|
+| `GET /api/me` | `GET /api/auth/me` | 与其余认证接口同一前缀，拦截器白名单只需维护一处 |
+| `PATCH /api/canvases/{id}` 只改标题 | 并入 `PUT` 全量 | 标题与快照一起提交通道更少；前端本来就要保存快照，没必要两条路径 |
+| `PUT /api/canvases/{id}/data` | `PUT /api/canvases/{id}` | 画布没有「除 data 之外」的可写字段，多一层路径无收益 |
+
+**错误码**：统一错误体 `{code, message, field?}`，前端按 `code` 分支。
+
+| code | HTTP | 含义 |
+|---|---|---|
+| `CANVAS_NOT_FOUND` | 404 | 画布不存在 / 已删 / 不属于当前账号（三者统一，避免探测别人的 id） |
+| `CANVAS_VERSION_CONFLICT` | 409 | `baseVersion` 落后，别人已保存过 |
+| `CANVAS_LIMIT_REACHED` | 409 | 单账号画布数达上限（默认 50，`CANVAS_MAX_PER_USER` 可调） |
+| `CANVAS_TOO_LARGE` | 413 | 单次快照超过 2MB（`CANVAS_MAX_DATA_BYTES` 可调） |
 
 ---
 
@@ -421,10 +472,9 @@ git push -u origin main
 |---|---|---|
 | **M0.5 可行性冒烟**（最高优先） | 最小 Spring Boot 容器 + `Dockerfile.vercel` 推 Vercel | 公网可访问 `/actuator/health`；确认 Hobby 允许容器；记录冷启动耗时与 SSE 是否可跑满 60s |
 | **M0 交互原型** | 纯前端单页，无后端，回答用假数据 | 粘贴代码成块、整块拖动、选中出加号、连线带问题标签、回答框避让、一键整理，全部可交互 |
-| **M2 注册登录** ✅ | 图形码 + 6 位邮件码 + 频控 + BCrypt + httpOnly Cookie 会话 | 真实 Neon 上完成注册/登录/刷新/登出；真实 QQ SMTP 发信成功；35 个测试覆盖边界 |
 | **M1 后端骨架** ✅ | Spring Boot + Flyway（V1: 6 张表）+ Neon 连接串兼容 | 内嵌 PG 跑真实迁移通过；`/api/db/ping` 返回 schema 版本与表清单；无库时可用 `DB_OPTIONAL=true` 启动 |
-| **M2 认证** | 图形码、邮件码、频控、登录、Cookie 会话 | 同邮箱 60s 冷却、同 IP 日限 10 次生效；错误码齐全 |
-| **M3 画布持久化** | 多画布 CRUD、快照保存、乐观锁 | 刷新不丢内容；两标签页同改触发 409 并提示 |
+| **M2 注册登录** ✅ | 图形码 + 6 位邮件码 + 频控 + BCrypt + httpOnly Cookie 会话 | 真实 Neon 上完成注册/登录/刷新/登出；真实 QQ SMTP 发信成功；11 个认证用例覆盖边界 |
+| **M3 画布持久化** ✅ | 多画布 CRUD、jsonb 快照、`version` 乐观锁、前端防抖自动保存 | 刷新不丢内容；两标签页同改触发 409 并有「重新加载 / 以我为准」两个出口 |
 | **M4 AI 问答** | Provider 抽象、SSRF 校验、加密存储、SSE | 6 个预设可切换；Key 掩码回显；内网地址被拒 |
 | **M5 上线** | GitHub push → Vercel 双项目 → 域名（可选） | 换一台电脑浏览器可完整走通全流程 |
 | **M6 打磨** | 代码高亮、导出 PNG、性能虚拟化 | 200 个节点下拖动不掉帧 |
@@ -447,9 +497,32 @@ git push -u origin main
       远端 HEAD 与本地一致（建仓时的空历史已用 `--allow-unrelated-histories` 合并，未覆盖任何内容）
 - [x] **M2 注册登录**：图形码（`SpecCaptcha`）+ 邮件码（BCrypt 存哈希）+ 频控（同邮箱 60s / 同 IP 每日 10 次）
       + BCrypt 密码 + HS256 JWT 存 httpOnly Cookie；前端登录/注册页与会话守卫
+- [x] **M3 画布持久化**：`/api/canvases` 五个接口 + jsonb 快照 + `version` 乐观锁 + 软删；
+      前端防抖 700ms 自动保存、保存状态条、跨标签页 409 与「重新加载 / 以我为准」；
+      **后端 46 个测试全过**（新增 11 个画布用例），真实 Neon 上 API 与浏览器端到端均通过
 - [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点（要用户操作）**
-- [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）← M2 开始前必须做
+- [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）
 - [ ] 域名（M5 前决定即可，仅影响国内访问）
+- [ ] **M4 动手前必须先解决**：`questions.id` 是 uuid 列，而画布快照里的问答 id 是前端生成的
+      `q_xxx` 文本；接 AI 落库时要加 V2 迁移（新增 `client_id text` 或把主键改 text），
+      否则「快照里的问答」与「questions 表」无法关联
+
+### M3 已验证的行为（回归基线）
+
+| 行为 | 期望 |
+|---|---|
+| 首次登录（无画布） | 自动建一个「二分查找 · 边界问题」示例画布，并注入 2 条示例问答 |
+| 刷新页面 | 代码块、回答框、回答文本、缩放/平移位置全部原样回来 |
+| 拖动代码块 / 回答框后刷新 | 位置保持；已回答的问答不丢 |
+| 再开一个标签页 | 加载同一画布；两个标签页各自有独立的 `version` |
+| 两标签页都改 | 后保存的一方出现「已在别处修改」+「重新加载 / 以我为准」，且**不会静默覆盖** |
+| 点「重新加载」 | 本地未保存改动丢弃，内容回到服务端最新版 |
+| 点「以我为准」 | 先取最新版本号再写，覆盖对方改动成功 |
+| 新建画布 | 立刻出现在列表首位并切换过去，刷新后仍停在它（localStorage 记 active） |
+| 双击画布标题 | 就地重命名，Enter 提交、Esc 取消，随后自动保存 |
+| 删除画布 | hover 出现 × → 二次确认 → 从列表消失；删最后一个会自动补一个空画布 |
+| 断网或服务端 500 | 保存状态变「保存失败 + 重试」，本地内容不丢 |
+| 登出再登录 | 上一个账号的画布不残留、不闪现 |
 
 ### M0 已验证的行为（回归基线，改动后需复测）
 
@@ -501,5 +574,10 @@ mvn spring-boot:run                    # http://localhost:8080
 - 改画布相关代码前，**先跑一遍 M0 原型的交互**，确认没有回归
 - 任何涉及锚点、DOM 结构、文本节点的改动，都必须验证「刷新后高亮位置仍然正确」
 - 新增第三方依赖前先问：能不能 100 行自己写完？画布类项目最怕依赖臃肿
-- 不要擅自把 JSONB 拆成关系表，也不要把问答塞进 JSONB，当前的切分是权衡后的结果
+- **`canvases.data` 就是画布的全部渲染数据**（blocks + questions 的展示态 + viewport + bg），
+  一次 PUT 整体覆盖，这是刻意的：画布是「整块快照」语义，拆表会带来部分写失败与写放大。
+  但不要因此把**问答的调用记录**也塞进 jsonb——`questions` / `answers` 两张表在 M4 用来存
+  AI 调用审计、重答历史与 token 统计，它们不参与渲染，也不做渲染时的回读。
+- 前端保存是「引用相等」判脏（`synced` Map 存 doc 引用），不要改成深比较或 JSON 字符串比较，
+  拖动代码块时每秒几十次 setState，深比较会直接卡住主线程
 - 不确定的交互细节，**先做出来给用户点一下**，比写三页设计文档有用

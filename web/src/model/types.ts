@@ -73,8 +73,11 @@ export interface Question {
 }
 
 export interface CanvasDoc {
+  /** 与服务端 canvases.id 一致；新建未落库时才是临时 id */
   id: string;
   title: string;
+  /** 服务端乐观锁版本；保存成功后由服务端返回的新值覆盖 */
+  version: number;
   blocks: CodeBlockModel[];
   questions: Question[];
   viewport: Viewport;

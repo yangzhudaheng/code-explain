@@ -927,6 +927,128 @@ button {
   flex: none;
 }
 
+/* 画布项：hover 才露出删除，避免列表看起来像一排叉号 */
+.doc-del {
+  flex: none;
+  display: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #b6c0cf;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.doc-list li:hover .doc-del {
+  display: grid;
+}
+
+.doc-del:hover {
+  background: #ffecec;
+  color: var(--danger);
+}
+
+.doc-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 1px 4px;
+  outline: none;
+}
+
+.doc-confirm {
+  background: #fff7f7 !important;
+  color: var(--danger);
+  cursor: default !important;
+}
+
+.doc-mini {
+  flex: none;
+  border: 1px solid #e6eaf2;
+  background: #fff;
+  border-radius: 5px;
+  font-size: 11px;
+  padding: 2px 6px;
+  color: #55637a;
+  cursor: pointer;
+}
+
+.doc-mini.danger {
+  border-color: #f2c9c9;
+  color: var(--danger);
+}
+
+/* 保存状态条：一处显示「是否已落库」，冲突时直接给出两个选择 */
+.save-bar {
+  margin-top: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: #8b98ad;
+  font-size: 10.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.save-bar.save-saving {
+  background: #f2f6ff;
+  color: #3b6fd4;
+}
+
+.save-bar.save-pending {
+  background: #fffaef;
+  color: #a97a24;
+}
+
+.save-bar.save-saved {
+  background: #f3fbf6;
+  color: #2f8a5b;
+}
+
+.save-bar.save-conflict {
+  background: #fff5ef;
+  color: #b4482c;
+}
+
+.save-bar.save-error {
+  background: #fff5f5;
+  color: var(--danger);
+}
+
+.save-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.save-bar button {
+  border: 1px solid #e2e8f2;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 10.5px;
+  padding: 3px 7px;
+  color: #55637a;
+  cursor: pointer;
+}
+
+.save-bar button.danger {
+  border-color: #f2c9c9;
+  color: var(--danger);
+}
+
+.save-err {
+  word-break: break-all;
+}
+
 .side-tips {
   margin-top: 10px;
   padding-top: 10px;
@@ -1013,9 +1135,21 @@ button {
 
 .app-splash {
   height: 100%;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   background: var(--bg);
+}
+
+.splash-text {
+  margin: 0;
+  max-width: 320px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2);
 }
 
 .app-splash .brand-mark {

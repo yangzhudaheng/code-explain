@@ -7,14 +7,21 @@ import { SelectionPlus } from './SelectionPlus';
 import { bgStyle, toneOf } from './background';
 import { Toolbar } from '../ui/Toolbar';
 import { Sidebar } from '../ui/Sidebar';
+import { rememberActiveCanvas } from './workspace';
 
 export function Canvas() {
   const rootRef = useRef<HTMLDivElement>(null);
   const doc = useCanvas((s) => s.docs[s.activeId]);
+  const activeId = useCanvas((s) => s.activeId);
   const zoomAt = useCanvas((s) => s.zoomAt);
   const panBy = useCanvas((s) => s.panBy);
   const spaceRef = useRef(false);
   const [panning, setPanning] = useState(false);
+
+  // 记住最后打开的画布：刷新后直接回到它，而不是永远跳回第一个
+  useEffect(() => {
+    rememberActiveCanvas(activeId);
+  }, [activeId]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -93,6 +100,11 @@ export function Canvas() {
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
   };
+
+  // 兜底：任何时刻 docs 为空都不该白屏，给个空白画布
+  if (!doc) {
+    return <div ref={rootRef} className="canvas-root" />;
+  }
 
   const { viewport, bg } = doc;
   const tone = toneOf(bg.tone);
