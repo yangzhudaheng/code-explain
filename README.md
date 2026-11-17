@@ -10,8 +10,9 @@
 - **M0.5 容器冒烟包**：已完成（待部署到 Vercel 验证 Hobby 是否允许容器）
 - **画布增强**：背景切换、回答框左右分侧、代码行号、语法高亮 已完成
 - **代码块编辑**：编辑文本/文件名/语言、清空、删除代码块，改完自动重定位已有问答的锚点
-- **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（6 张表）+ Neon 连接串兼容 + `/api/db/ping` 自检；12 个测试全过
-- M2~M6：未开始
+- **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（6 张表）+ Neon 连接串兼容 + `/api/db/ping` 自检
+- **M2 注册登录**：图形码 + 邮件验证码（QQ SMTP 465）+ 频控 + BCrypt + httpOnly Cookie 会话；35 个测试全过
+- M3~M6：未开始
 
 ## 目录
 
@@ -72,6 +73,23 @@ DB_OPTIONAL=true mvn spring-boot:run     # 跳过迁移，其余接口正常；/
 mvn test
 ```
 
+## 认证接口（M2）
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/auth/captcha` | 返回 `{id, image}`，`image` 是 PNG data URL，可直接塞进 `<img src>` |
+| `POST /api/auth/email-code` | 需带图形码；同邮箱 60 秒冷却、同 IP 每日 10 次 |
+| `POST /api/auth/register` | `{email, code, password, displayName?}`，成功即下发会话 Cookie |
+| `POST /api/auth/login` | `{email, password}` |
+| `POST /api/auth/logout` | 下发过期 Cookie |
+| `GET /api/auth/me` | 需要会话；未登录返回 401 `UNAUTHORIZED` |
+| `GET /api/auth/policy` | 冷却秒数、码有效期、次数上限，供前端展示 |
+
+错误统一为 `{code, message, field?}`，`code` 取值见 `common/ErrorCode.java`。
+
+**为什么图形码答案存服务端**：存 cookie 或签名里等于把答案交给攻击者。代价是多实例需要粘性会话，
+本项目 Vercel 每实例单 JVM，暂不构成问题；将来横向扩容换成 Redis 即可。
+
 ## 部署（GitHub → Vercel）
 
 ### 1. 推代码
@@ -111,6 +129,13 @@ git push -u origin main
 | `DATABASE_URL` | Neon 连接串，`postgres://` 原样粘贴即可（推荐，Vercel 集成会自动注入） |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | 备选写法，`DB_URL` 需为 `jdbc:postgresql://` |
 | `DB_OPTIONAL` | 仅容器冒烟用：`true` 时无数据库也能启动；正常部署保持未设置 |
+| `JWT_SECRET` | 会话签名密钥，`openssl rand -base64 48`；**少于 32 字节会拒绝启动** |
+| `TOKEN_TTL` | 登录有效期，默认 `PT168H`（7 天） |
+| `COOKIE_SECURE` | 线上必须 `true`；本地 `http://localhost` 必须 `false` |
+| `SMTP_HOST` / `SMTP_PORT` | QQ 邮箱填 `smtp.qq.com` / `465`（云平台会封 25 端口） |
+| `SMTP_USER` / `SMTP_PASS` | 邮箱全称 + **SMTP 授权码**（不是登录密码） |
+| `SMTP_FROM` | 发件人，留空则同 `SMTP_USER` |
+| `CAPTCHA_DEBUG` | 仅本地自动化测试用，打印图形码答案；生产必须 `false` |
 | `DB_POOL_SIZE` | 连接池大小，默认 4（Vercel 每实例一个 JVM，别调大） |
 | `JWT_SECRET` | 会话签名，≥32 字节随机串 |
 | `APP_ENC_KEY` | 用户模型 API Key 的加密主密钥（AES-GCM，Base64） |

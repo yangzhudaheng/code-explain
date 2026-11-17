@@ -1,10 +1,17 @@
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  # 反代（Vercel / Nginx）后要信任 X-Forwarded-*，否则拿不到真实协议与客户端 IP
+  forward-headers-strategy: framework
 
 spring:
   application:
     name: code-explain-api
+
+  # 本地开发从 api/.env 读 KEY=VALUE（文件不存在时静默跳过，线上靠平台环境变量）
+  # 用 optional: 前缀，缺少文件不影响启动；[.properties] 让它按 properties 语法解析
+  config:
+    import: optional:file:./.env[.properties]
 
   # 数据源由 DataSourceConfig 构造（要兼容 Neon 的 postgres:// 连接串），
   # 这里不写 spring.datasource.*，避免和自定义 DataSource Bean 打架。
@@ -19,11 +26,42 @@ spring:
   jackson:
     default-property-inclusion: non_null
 
+  # QQ / 163 等邮箱：25 端口在云平台基本被封，统一走 465 隐式 SSL
+  mail:
+    host: ${SMTP_HOST:smtp.qq.com}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASS:}
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          # 三个超时都要设：容器里卡住不返回比报错更麻烦
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
 app:
   db:
     # true 只在「先验证 Vercel 容器能不能起」时用；正常部署必须为 false
     optional: ${DB_OPTIONAL:false}
     pool-size: ${DB_POOL_SIZE:4}
+
+  auth:
+    # 未配置时启动会生成临时密钥并告警：本地/CI 能跑，但重启即掉登录
+    jwt-secret: ${JWT_SECRET:}
+    token-ttl: ${TOKEN_TTL:PT168H}
+    # 线上（https）应设为 true；本地 http://localhost 必须 false，否则浏览器直接丢弃 Cookie
+    cookie-secure: ${COOKIE_SECURE:false}
+    cookie-same-site: Lax
+    # 仅本地自动化测试用：把图形码答案打到日志。生产必须保持 false
+    debug-captcha: ${CAPTCHA_DEBUG:false}
+
+  mail:
+    from: ${SMTP_FROM:}
 
 management:
   endpoints:

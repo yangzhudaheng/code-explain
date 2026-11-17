@@ -42,6 +42,12 @@
     - 文本改动后按 `anchor.quote` 在新文本里重新查找：找到 → 重算偏移并重测几何；找不到 → 标 `stale`，保留问答内容、连线改虚线、回答框显示「锚点失效」。
     - 同名片段出现多次时，取**离原偏移最近**的一处（`nearestIndexOf`），不能直接 `indexOf` 取第一个，否则在上方插一行就会把锚点甩到别处。
     - 绝不允许「改代码 = 删掉用户的问题」这种实现。
+12. **测试绝不连真实数据库。**
+    - 本地 `api/.env` 里有真实 Neon 连接串。所有 `@SpringBootTest` 必须显式清空
+      `DATABASE_URL` / `DB_USER` / `DB_PASSWORD`，否则测试里的 insert/delete 直接打到线上库。
+    - `MigrationTest` 保留一条护栏用例（断言 `host(inet_server_addr())` 是本机回环），
+      任何人把测试指向远端时它会在 10 毫秒内失败。
+    - 测试也不用真实 SMTP：用 `@SpyBean` 截获验证码，测试永远不该往真实邮箱投递。
 
 ---
 
@@ -76,6 +82,12 @@
 >    不依赖扩展权限（Neon 换库、将来换托管都不用重新申请扩展）。
 > 3. 测试用 `io.zonky.test:embedded-postgres` 拉真实 PostgreSQL。**不要在测试里用 H2**：
 >    迁移里有 jsonb、`::jsonb` 转换、部分索引、check 约束，H2 兼容模式跑不通，测出来的通过是假的。
+> 4. 图形码用 `SpecCaptcha`（字符图），**不要用 `ArithmeticCaptcha`（算式题）**：
+>    它内部靠 Nashorn（`javax.script` 的 JS 引擎）求值算式，而 JDK 15 起 Nashorn 被移除，
+>    JDK 21 上 `text()` 直接 NPE —— 接口上线就是 500。这个坑是 `CaptchaServiceTest` 跑出来的。
+> 5. JWT 不引 jjwt，手写 HS256（约 150 行）。但必须守住三条：只接受 `alg=HS256`（挡住
+>    `alg=none` 与算法混淆）、签名比对用 `MessageDigest.isEqual`（常量时间）、
+>    配了密钥但不足 32 字节直接启动失败（不做静默降级）。
 | 会话 | JWT HS256 放 **httpOnly + Secure + SameSite=Lax Cookie**（同源代理使 Cookie 可用，避免 localStorage 被 XSS 偷） |
 | 部署 | `Dockerfile.vercel`，监听 `$PORT` |
 
@@ -409,6 +421,7 @@ git push -u origin main
 |---|---|---|
 | **M0.5 可行性冒烟**（最高优先） | 最小 Spring Boot 容器 + `Dockerfile.vercel` 推 Vercel | 公网可访问 `/actuator/health`；确认 Hobby 允许容器；记录冷启动耗时与 SSE 是否可跑满 60s |
 | **M0 交互原型** | 纯前端单页，无后端，回答用假数据 | 粘贴代码成块、整块拖动、选中出加号、连线带问题标签、回答框避让、一键整理，全部可交互 |
+| **M2 注册登录** ✅ | 图形码 + 6 位邮件码 + 频控 + BCrypt + httpOnly Cookie 会话 | 真实 Neon 上完成注册/登录/刷新/登出；真实 QQ SMTP 发信成功；35 个测试覆盖边界 |
 | **M1 后端骨架** ✅ | Spring Boot + Flyway（V1: 6 张表）+ Neon 连接串兼容 | 内嵌 PG 跑真实迁移通过；`/api/db/ping` 返回 schema 版本与表清单；无库时可用 `DB_OPTIONAL=true` 启动 |
 | **M2 认证** | 图形码、邮件码、频控、登录、Cookie 会话 | 同邮箱 60s 冷却、同 IP 日限 10 次生效；错误码齐全 |
 | **M3 画布持久化** | 多画布 CRUD、快照保存、乐观锁 | 刷新不丢内容；两标签页同改触发 409 并提示 |
@@ -432,10 +445,11 @@ git push -u origin main
       数据库连接串归一化、`/api/db/ping` 自检；12 个测试（含真实 PG 迁移）全过
 - [x] **代码已推送到 GitHub**：`yangzhudaheng/code-explain` 私有仓库，42 个文件，
       远端 HEAD 与本地一致（建仓时的空历史已用 `--allow-unrelated-histories` 合并，未覆盖任何内容）
+- [x] **M2 注册登录**：图形码（`SpecCaptcha`）+ 邮件码（BCrypt 存哈希）+ 频控（同邮箱 60s / 同 IP 每日 10 次）
+      + BCrypt 密码 + HS256 JWT 存 httpOnly Cookie；前端登录/注册页与会话守卫
 - [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点（要用户操作）**
 - [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）← M2 开始前必须做
 - [ ] 域名（M5 前决定即可，仅影响国内访问）
-- [ ] M2 认证：图形码 + 邮件码 + 频控 + Cookie 会话
 
 ### M0 已验证的行为（回归基线，改动后需复测）
 

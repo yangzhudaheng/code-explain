@@ -54,6 +54,34 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
+    <!-- 认证：只取 BCrypt，不引整个 Security 过滤器链（它会强行接管所有路径） -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+    <!-- 验证码答案、频控计数存内存，带 TTL 自动过期 -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+    <!-- 图形验证码：纯 Java2D 生成 PNG，不依赖第三方账号/网络 -->
+    <dependency>
+      <groupId>com.github.whvcse</groupId>
+      <artifactId>easy-captcha</artifactId>
+      <version>1.6.2</version>
+      <exclusions>
+        <!-- easy-captcha 自带的 slf4j 版本很老，会和 Spring Boot 的冲突 -->
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-api</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

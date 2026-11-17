@@ -29,7 +29,9 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p>用内嵌 PostgreSQL 而不是 H2：迁移里有 jsonb、`::jsonb` 转换、部分索引、check 约束，
  * H2 兼容模式跑不通这些，测出来的「通过」是假的。
  */
-@SpringBootTest
+// 显式清空 DATABASE_URL：本地 api/.env 里有真实 Neon 连接串，
+// 不屏蔽的话这个测试会连到线上库并 insert/delete 数据。
+@SpringBootTest(properties = {"DATABASE_URL=", "DB_USER=", "DB_PASSWORD="})
 @AutoConfigureMockMvc
 class MigrationTest {
 
@@ -165,5 +167,17 @@ class MigrationTest {
                 .andExpect(jsonPath("$.server").value(org.hamcrest.Matchers.containsString("PostgreSQL")))
                 .andExpect(jsonPath("$.tables", hasItem("questions")))
                 .andExpect(jsonPath("$.tables", hasItem("canvases")));
+    }
+
+    @Test
+    @DisplayName("护栏：测试必须连本机内嵌库，绝不能连到线上 Neon")
+    void neverRunsAgainstRemoteDatabase() {
+        // host() 去掉 inet 的掩码，否则返回 "127.0.0.1/32"
+        String addr = jdbc.queryForObject(
+                "select coalesce(host(inet_server_addr()), '127.0.0.1')", String.class);
+        assertThat(addr)
+                .as("测试会 insert/delete 数据，连到远端库就是事故。检查 api/.env 是否被测试读到")
+                // AssertJ 的 matches() 是整串匹配，不是前缀匹配
+                .matches("^(127\\.\\d+\\.\\d+\\.\\d+|::1|0\\.0\\.0\\.0)$");
     }
 }

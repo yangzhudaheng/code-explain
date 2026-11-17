@@ -1,4 +1,5 @@
 import { useCanvas } from '../store/canvasStore';
+import { useSession } from '../store/sessionStore';
 
 export function Sidebar() {
   const order = useCanvas((s) => s.order);
@@ -6,6 +7,11 @@ export function Sidebar() {
   const activeId = useCanvas((s) => s.activeId);
   const setActive = useCanvas((s) => s.setActive);
   const addCanvas = useCanvas((s) => s.addCanvas);
+  const user = useSession((s) => s.user);
+  const logout = useSession((s) => s.logout);
+
+  const label = user?.displayName || user?.email || '';
+  const initial = label.slice(0, 1).toUpperCase();
 
   return (
     <aside className="sidebar" onPointerDown={(e) => e.stopPropagation()}>
@@ -47,7 +53,20 @@ export function Sidebar() {
         <p>· Ctrl+V 直接粘贴代码</p>
       </div>
 
-      <div className="side-foot">M0 交互原型 · 回答为模拟数据</div>
+      <div className="side-user">
+        <span className="side-avatar">{initial}</span>
+        <div className="side-user-info">
+          <div className="side-user-name">{user?.displayName || '未命名'}</div>
+          <div className="side-user-mail">{user?.email}</div>
+        </div>
+        <button
+          className="side-logout"
+          title="退出登录"
+          onClick={() => void logout()}
+        >
+          退出
+        </button>
+      </div>
     </aside>
   );
 }
