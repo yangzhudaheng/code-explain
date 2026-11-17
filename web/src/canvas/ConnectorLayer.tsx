@@ -1,5 +1,33 @@
-import { bezierPoint, connectorOpacity, DEFAULT_BOX_H } from './layout';
+import { bezierPoint, BOX_WIDTH, connectorOpacity, DEFAULT_BOX_H } from './layout';
 import { useCanvas } from '../store/canvasStore';
+import type { CodeBlockModel, Question, Side } from '../model/types';
+
+interface Geometry {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  p1: { x: number; y: number };
+  p2: { x: number; y: number };
+  path: string;
+  gapX: number;
+}
+
+/** 按回答框所在侧计算连线：右侧从代码块右边界出发，左侧从左边界出发 */
+function geometryOf(q: Question, block: CodeBlockModel | undefined, fan: number): Geometry {
+  const side: Side = q.side;
+  const startX = block ? (side === 'right' ? block.x + block.width : block.x) : q.anchorPoint.x;
+  const start = { x: startX, y: q.anchorPoint.y + fan };
+  const endX = side === 'right' ? q.boxX : q.boxX + BOX_WIDTH;
+  const end = { x: endX, y: q.boxY + (q.boxH || DEFAULT_BOX_H) / 2 };
+
+  const dx = Math.max(40, Math.abs(end.x - start.x) * 0.4);
+  // 从代码块指向回答框的方向：右列 +1，左列 -1
+  const out = side === 'right' ? 1 : -1;
+  const p1 = { x: end.x - out * dx, y: end.y };
+  const p2 = { x: start.x + out * dx, y: start.y };
+  const path = `M ${end.x} ${end.y} C ${p1.x} ${p1.y}, ${p2.x} ${p2.y}, ${start.x} ${start.y}`;
+
+  return { start, end, p1, p2, path, gapX: (start.x + end.x) / 2 };
+}
 
 export function ConnectorLayer() {
   const questions = useCanvas((s) => s.docs[s.activeId].questions);
@@ -26,16 +54,18 @@ export function ConnectorLayer() {
     return (index - (list.length - 1) / 2) * 12;
   };
 
+  const geom = new Map<string, Geometry>();
+  for (const q of questions) {
+    const block = blocks.find((b) => b.id === q.blockId);
+    const fan = fanOffset(q.id, `${q.blockId}:${q.anchor.startOffset}:${q.anchor.endOffset}`);
+    geom.set(q.id, geometryOf(q, block, fan));
+  }
+
   return (
     <>
       <svg className="connector-svg" width="1" height="1">
         {questions.map((q) => {
-          const start = q.anchorPoint;
-          const dy = fanOffset(q.id, `${q.blockId}:${q.anchor.startOffset}:${q.anchor.endOffset}`);
-          const from = { x: start.x, y: start.y + dy };
-          const end = { x: q.boxX, y: q.boxY + (q.boxH || DEFAULT_BOX_H) / 2 };
-          const dx = Math.max(40, Math.abs(end.x - from.x) * 0.4);
-          const d = `M ${end.x} ${end.y} C ${end.x - dx} ${end.y}, ${from.x + dx} ${from.y}, ${from.x} ${from.y}`;
+          const g = geom.get(q.id)!;
           const base = connectorOpacity(counts.get(q.blockId) ?? 1);
           const active = hoverQid === q.id;
           const dimmed = hoverQid !== null && !active;
@@ -44,7 +74,7 @@ export function ConnectorLayer() {
           return (
             <g key={q.id}>
               <path
-                d={d}
+                d={g.path}
                 fill="none"
                 stroke={active ? '#2f6fed' : '#9fb2d4'}
                 strokeWidth={active ? 1.8 : 1.2}
@@ -52,7 +82,7 @@ export function ConnectorLayer() {
                 markerEnd="url(#arrow-head)"
               />
               <path
-                d={d}
+                d={g.path}
                 className="connector-hit"
                 fill="none"
                 stroke="transparent"
@@ -86,24 +116,14 @@ export function ConnectorLayer() {
       </svg>
 
       {questions.map((q) => {
-        const start = q.anchorPoint;
-        const end = { x: q.boxX, y: q.boxY + (q.boxH || DEFAULT_BOX_H) / 2 };
-        const dx = Math.max(40, Math.abs(end.x - start.x) * 0.4);
-        const p0 = end;
-        const p1 = { x: end.x - dx, y: end.y };
-        const p2 = { x: start.x + dx, y: start.y };
-        const block = blocks.find((b) => b.id === q.blockId);
-        // 标签放在「代码块右边界」与「回答框左边界」之间的空隙里，
+        const g = geom.get(q.id)!;
+        // 标签放在「代码块边界」与「回答框边界」之间的空隙里，
         // 而不是曲线固定 t=0.5 处，避免压到代码文字
-        const gapX = block
-          ? (block.x + block.width + q.boxX) / 2
-          : (start.x + end.x) / 2;
-        let labelPos = { x: gapX, y: (start.y + end.y) / 2 };
+        let labelPos = { x: g.gapX, y: (g.start.y + g.end.y) / 2 };
         let bestDist = Number.POSITIVE_INFINITY;
         for (let i = 1; i < 20; i++) {
-          const t = i / 20;
-          const p = bezierPoint(p0, p1, p2, start, t);
-          const dist = Math.abs(p.x - gapX);
+          const p = bezierPoint(g.end, g.p1, g.p2, g.start, i / 20);
+          const dist = Math.abs(p.x - g.gapX);
           if (dist < bestDist) {
             bestDist = dist;
             labelPos = { x: p.x, y: p.y };

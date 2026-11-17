@@ -2,8 +2,8 @@ import type { Anchor, CodeBlockModel, Rect4 } from '../model/types';
 
 /**
  * 把 DOM Selection 的端点换算成「相对代码块纯文本」的字符偏移。
- * 前提：<pre> 内只有一个 Text 节点（粘贴进来的整段代码），
- * 这样偏移量永远稳定，且不会被高亮 DOM 污染。
+ * 用 Range.toString() 累计，因此 <pre> 内含多少个 span 都不影响结果——
+ * 语法高亮只是把文本切碎包裹，字符总数与顺序不变。
  */
 export function rangeToOffsets(
   pre: HTMLElement,
@@ -49,6 +49,51 @@ export function lineCharToOffset(content: string, line: number, char: number) {
 }
 
 /**
+ * 在可能被高亮 span 切碎的元素里，找到第 offset 个字符所在的文本节点与节点内偏移。
+ * 这是「有语法高亮之后仍然能按字符偏移还原选区」的关键：
+ * 不能再用 pre.firstChild 这种单文本节点假设。
+ */
+function locateText(pre: HTMLElement, offset: number): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+  let acc = 0;
+  let last: Text | null = null;
+  let raw = walker.nextNode();
+  while (raw) {
+    const node = raw as Text;
+    const len = node.data.length;
+    if (offset <= acc + len) return { node, offset: Math.max(0, offset - acc) };
+    acc += len;
+    last = node;
+    raw = walker.nextNode();
+  }
+  // 偏移超出末尾（例如选中了最后一行行尾的换行）时贴着最后一个文本节点收尾
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
+/**
+ * Range.getClientRects() 会按「行片段」返回矩形：一段选中文字被高亮 span 切成多个片段时，
+ * 同一行会冒出好几个互相重叠的矩形。直接渲染会让半透明底色叠深、出现斑块，
+ * 所以同一行（top 相同）的片段必须合并成一个。跨行仍然分开，保留逐行高亮效果。
+ */
+function mergeLineRects(rects: Rect4[]): Rect4[] {
+  const sorted = [...rects].sort((a, b) => a.top - b.top || a.left - b.left);
+  const out: Rect4[] = [];
+  for (const r of sorted) {
+    if (r.width <= 0.5) continue;
+    const last = out[out.length - 1];
+    const sameLine = last && Math.abs(r.top - last.top) < 1.5 && Math.abs(r.height - last.height) < 2;
+    if (sameLine) {
+      const right = Math.max(last.left + last.width, r.left + r.width);
+      last.left = Math.min(last.left, r.left);
+      last.width = right - last.left;
+    } else {
+      out.push({ ...r });
+    }
+  }
+  return out;
+}
+
+/**
  * 由字符偏移测量出两点：
  * 1) rects —— 相对正文容器的矩形，用来画持久高亮
  * 2) point —— 画布世界坐标里的锚点（右边缘中点），连线从这里出发
@@ -63,16 +108,14 @@ export function measureAnchor(input: {
   endOffset: number;
 }): { rects: Rect4[]; point: { x: number; y: number } } | null {
   const { pre, blockEl, bodyEl, block, zoom, startOffset, endOffset } = input;
-  const textNode = pre.firstChild;
-  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return null;
 
-  const max = (textNode as Text).length;
-  const s = Math.max(0, Math.min(startOffset, max));
-  const e = Math.max(s, Math.min(endOffset, max));
+  const start = locateText(pre, startOffset);
+  const end = locateText(pre, endOffset);
+  if (!start || !end) return null;
 
   const range = document.createRange();
-  range.setStart(textNode, s);
-  range.setEnd(textNode, e);
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
 
   const clientRects = Array.from(range.getClientRects()).filter(
     (r) => r.width > 0.5 || r.height > 0.5,
@@ -89,12 +132,14 @@ export function measureAnchor(input: {
     };
   }
 
-  const rects: Rect4[] = clientRects.map((r) => ({
-    left: (r.left - bodyRect.left) / zoom,
-    top: (r.top - bodyRect.top) / zoom,
-    width: r.width / zoom,
-    height: r.height / zoom,
-  }));
+  const rects = mergeLineRects(
+    clientRects.map((r) => ({
+      left: (r.left - bodyRect.left) / zoom,
+      top: (r.top - bodyRect.top) / zoom,
+      width: r.width / zoom,
+      height: r.height / zoom,
+    })),
+  );
 
   const top = Math.min(...clientRects.map((r) => r.top));
   const bottom = Math.max(...clientRects.map((r) => r.bottom));

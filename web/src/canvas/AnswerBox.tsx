@@ -9,6 +9,7 @@ export function AnswerBox({ q }: { q: Question }) {
   const togglePin = useCanvas((s) => s.togglePin);
   const toggleCollapse = useCanvas((s) => s.toggleCollapse);
   const removeQuestion = useCanvas((s) => s.removeQuestion);
+  const setSide = useCanvas((s) => s.setSide);
   const setHover = useCanvas((s) => s.setHover);
   const hoverQid = useCanvas((s) => s.hoverQid);
 
@@ -66,6 +67,19 @@ export function AnswerBox({ q }: { q: Question }) {
         </span>
         <div className="answer-actions">
           <button
+            className="box-btn"
+            title={q.side === 'right' ? '移到代码左侧' : '移到代码右侧'}
+            onClick={() => {
+              setSide(q.id, q.side === 'right' ? 'left' : 'right');
+              const rootEl = document.querySelector('.canvas-root') as HTMLElement | null;
+              if (rootEl) {
+                useCanvas.getState().ensureVisible(q.id, rootEl.getBoundingClientRect());
+              }
+            }}
+          >
+            {q.side === 'right' ? '←' : '→'}
+          </button>
+          <button
             className={`box-btn ${q.pinned ? 'on' : ''}`}
             title={q.pinned ? '已锁定位置，整理时不动' : '锁定位置'}
             onClick={() => togglePin(q.id)}
@@ -96,7 +110,9 @@ export function AnswerBox({ q }: { q: Question }) {
             </div>
           )}
           <div className="answer-foot">
-            <span>{q.model}</span>
+            <span>
+              {q.side === 'right' ? '右侧' : '左侧'} · {q.model}
+            </span>
             <span>
               锚点 L{q.anchor.startLine + 1}:{q.anchor.startChar + 1}
             </span>

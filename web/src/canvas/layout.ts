@@ -1,9 +1,13 @@
-import type { CanvasDoc, CodeBlockModel, Question, Viewport } from '../model/types';
+import type { CanvasDoc, CodeBlockModel, Question, Side, Viewport } from '../model/types';
 
 export const COL_OFFSET = 140;
 export const BOX_GAP = 16;
 export const BOX_WIDTH = 320;
 export const DEFAULT_BOX_H = 110;
+/** 侧栏宽度（与 styles.css 的 .sidebar 保持一致） */
+export const SIDEBAR_W = 216;
+/** 布局时留出的最小可视边距 */
+const MIN_ROOM = 8;
 
 export function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
@@ -39,25 +43,73 @@ export function zoomAround(
   };
 }
 
+/** 某一侧的「回答列」在世界坐标里的左上角 x */
+export function columnX(block: CodeBlockModel, side: Side) {
+  return side === 'right'
+    ? block.x + block.width + COL_OFFSET
+    : block.x - COL_OFFSET - BOX_WIDTH;
+}
+
+/** 连线在代码块上的起点 x：右侧贴右边界，左侧贴左边界 */
+export function anchorEdgeX(block: CodeBlockModel, side: Side) {
+  return side === 'right' ? block.x + block.width : block.x;
+}
+
+/** 连线在回答框上的落点 x：右侧框取左边界，左侧框取右边界 */
+export function boxEdgeX(q: Question, side: Side) {
+  return side === 'right' ? q.boxX : q.boxX + BOX_WIDTH;
+}
+
 /**
- * 单侧布局 + 贪心避让。
+ * 自动判断回答框应该放哪一侧。
+ * 优先级：先保证整列能落在可视区域内，两侧都放得下再按选中位置偏向哪边决定。
+ * 这样既照顾「选中位置在哪边」的直觉，又不会把回答框甩到屏幕外。
+ */
+export function chooseSide(input: {
+  block: CodeBlockModel;
+  viewport: Viewport;
+  containerRect: DOMRect;
+  anchorScreenX: number;
+}): Side {
+  const { block, viewport, containerRect, anchorScreenX } = input;
+  const toScreenX = (wx: number) => containerRect.left + viewport.x + wx * viewport.zoom;
+  const rightEdge = toScreenX(block.x + block.width + COL_OFFSET + BOX_WIDTH);
+  const leftEdge = toScreenX(block.x - COL_OFFSET - BOX_WIDTH);
+
+  const fitsRight = rightEdge <= containerRect.right - MIN_ROOM;
+  const fitsLeft = leftEdge >= containerRect.left + SIDEBAR_W + MIN_ROOM;
+
+  const roomRight = containerRect.right - anchorScreenX;
+  const roomLeft = anchorScreenX - (containerRect.left + SIDEBAR_W);
+
+  if (fitsRight && fitsLeft) return roomRight >= roomLeft ? 'right' : 'left';
+  if (fitsRight) return 'right';
+  if (fitsLeft) return 'left';
+  return roomRight >= roomLeft ? 'right' : 'left';
+}
+
+/**
+ * 分侧布局 + 贪心避让。
  * 规则：
- * - 回答框固定在「代码块右边界 + 96」的列上
- * - 按锚点 y 排序后依次下推，间距 16
+ * - 回答框按 (代码块, 侧) 分组，各自占一列
+ *   右侧列 = 代码块右边界 + COL_OFFSET，左侧列 = 代码块左边界 - COL_OFFSET - BOX_WIDTH
+ * - 组内按锚点 y 排序后依次下推，间距 16
  * - pinned 的框完全不参与重排（用户的意图优先）
  */
 export function arrange(questions: Question[], blocks: CodeBlockModel[]): Question[] {
   const next = questions.map((q) => ({ ...q }));
   const groups = new Map<string, Question[]>();
   for (const q of next) {
-    const list = groups.get(q.blockId) ?? [];
+    const key = `${q.blockId}|${q.side}`;
+    const list = groups.get(key) ?? [];
     list.push(q);
-    groups.set(q.blockId, list);
+    groups.set(key, list);
   }
 
-  for (const [blockId, list] of groups) {
+  for (const [key, list] of groups) {
+    const [blockId, side] = key.split('|') as [string, Side];
     const block = blocks.find((b) => b.id === blockId);
-    const colX = block ? block.x + block.width + COL_OFFSET : COL_OFFSET;
+    const colX = block ? columnX(block, side) : side === 'right' ? COL_OFFSET : -BOX_WIDTH - COL_OFFSET;
 
     list.sort((a, b) => a.anchorPoint.y - b.anchorPoint.y);
     let cursor = Number.NEGATIVE_INFINITY;
@@ -110,5 +162,6 @@ export function emptyDoc(id: string, title: string): CanvasDoc {
     blocks: [],
     questions: [],
     viewport: { x: 120, y: 120, zoom: 1 },
+    bg: { pattern: 'dot', tone: 'warm' },
   };
 }

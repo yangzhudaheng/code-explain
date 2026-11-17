@@ -4,6 +4,7 @@ import { CodeBlock } from './CodeBlock';
 import { AnswerBox } from './AnswerBox';
 import { ConnectorLayer } from './ConnectorLayer';
 import { SelectionPlus } from './SelectionPlus';
+import { bgStyle, toneOf } from './background';
 import { Toolbar } from '../ui/Toolbar';
 import { Sidebar } from '../ui/Sidebar';
 
@@ -88,22 +89,17 @@ export function Canvas() {
     el.addEventListener('pointerup', up);
   };
 
-  const { viewport } = doc;
-  const gridSize = 24 * viewport.zoom;
+  const { viewport, bg } = doc;
+  const tone = toneOf(bg.tone);
 
   return (
     <div
       ref={rootRef}
-      className={`canvas-root ${panning ? 'panning' : ''}`}
+      className={`canvas-root ${panning ? 'panning' : ''} tone-${bg.tone}`}
+      style={{ background: tone.base }}
       onPointerDown={onPointerDown}
     >
-      <div
-        className="grid"
-        style={{
-          backgroundSize: `${gridSize}px ${gridSize}px`,
-          backgroundPosition: `${viewport.x}px ${viewport.y}px`,
-        }}
-      />
+      <div className="grid" style={bgStyle(bg, viewport)} />
 
       <div
         className="world"

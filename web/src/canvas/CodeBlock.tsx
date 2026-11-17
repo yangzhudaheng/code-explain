@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import type { CodeBlockModel, Question } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
+import { tokenize } from './highlight';
 
 interface Props {
   block: CodeBlockModel;
@@ -35,7 +37,11 @@ export function CodeBlock({ block, questions }: Props) {
     el.addEventListener('pointerup', up);
   };
 
-  const lineCount = block.content.split('\n').length;
+  const lines = useMemo(() => block.content.split('\n'), [block.content]);
+  const tokens = useMemo(
+    () => tokenize(block.content, block.language),
+    [block.content, block.language],
+  );
 
   return (
     <div
@@ -54,19 +60,36 @@ export function CodeBlock({ block, questions }: Props) {
         <span className="chip">{block.language}</span>
         <span className="block-title">{block.title}</span>
         <span className="block-meta">
-          {lineCount} 行 · {questions.length > 0 ? `${questions.length} 个提问` : '可选中提问'}
+          {lines.length} 行 · {questions.length > 0 ? `${questions.length} 个提问` : '可选中提问'}
         </span>
       </div>
       <div className="block-body">
-        <pre className="code" data-pre-id={block.id}>
-          {block.content}
-        </pre>
+        <div className="code-scroll">
+          <div className="gutter" aria-hidden="true">
+            {lines.map((_, i) => (
+              <span className="ln" key={i}>
+                {i + 1}
+              </span>
+            ))}
+          </div>
+          <pre className="code" data-pre-id={block.id}>
+            {tokens.map((t, i) =>
+              t.cls ? (
+                <span key={i} className={`tok-${t.cls}`}>
+                  {t.text}
+                </span>
+              ) : (
+                t.text
+              ),
+            )}
+          </pre>
+        </div>
         <div className="hl-layer">
           {questions.map((q) =>
             q.anchorRects.map((r, i) => (
               <div
                 key={`${q.id}_${i}`}
-                className={`hl ${hoverQid === q.id ? 'hl-active' : ''}`}
+                className={`hl ${i === 0 ? 'hl-start' : ''} ${hoverQid === q.id ? 'hl-active' : ''}`}
                 style={{
                   left: r.left,
                   top: r.top,

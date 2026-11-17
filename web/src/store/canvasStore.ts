@@ -1,6 +1,23 @@
 import { create } from 'zustand';
-import type { Anchor, CanvasDoc, CodeBlockModel, Question, Rect4, Viewport } from '../model/types';
-import { arrange, clamp, COL_OFFSET, DEFAULT_BOX_H, emptyDoc, zoomAround } from '../canvas/layout';
+import type {
+  Anchor,
+  CanvasBg,
+  CanvasDoc,
+  CodeBlockModel,
+  Question,
+  Rect4,
+  Side,
+  Viewport,
+} from '../model/types';
+import {
+  arrange,
+  BOX_WIDTH,
+  columnX,
+  DEFAULT_BOX_H,
+  emptyDoc,
+  SIDEBAR_W,
+  zoomAround,
+} from '../canvas/layout';
 
 export const SAMPLE_CODE = `class Solution {
     public int search(int[] nums, int target) {
@@ -34,6 +51,7 @@ function makeSampleDoc(): CanvasDoc {
     blocks: [block],
     questions: [],
     viewport: { x: 250, y: 70, zoom: 1 },
+    bg: { pattern: 'dot', tone: 'warm' },
   };
 }
 
@@ -66,6 +84,8 @@ export interface AddQuestionInput {
   anchorPoint: { x: number; y: number };
   anchorRects: Rect4[];
   text: string;
+  side?: Side;
+  sideMode?: 'auto' | 'manual';
 }
 
 interface CanvasStore {
@@ -83,6 +103,9 @@ interface CanvasStore {
 
   setActive: (id: string) => void;
   addCanvas: () => void;
+  setBg: (patch: Partial<CanvasBg>) => void;
+  /** 回答框落到可视区之外时，最小幅度平移画布把它拉回来 */
+  ensureVisible: (id: string, containerRect: DOMRect) => void;
 
   addBlock: (input: {
     content: string;
@@ -97,6 +120,7 @@ interface CanvasStore {
   addQuestion: (input: AddQuestionInput) => string;
   moveBox: (id: string, dx: number, dy: number) => void;
   setBoxH: (id: string, h: number) => void;
+  setSide: (id: string, side: Side) => void;
   togglePin: (id: string) => void;
   toggleCollapse: (id: string) => void;
   removeQuestion: (id: string) => void;
@@ -162,6 +186,36 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
     }));
   },
 
+  setBg: (patch) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      return { docs: { ...s.docs, [s.activeId]: { ...d, bg: { ...d.bg, ...patch } } } };
+    }),
+
+  ensureVisible: (id, rect) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      const q = d.questions.find((x) => x.id === id);
+      if (!q) return {};
+      const z = d.viewport.zoom;
+      const screenLeft = rect.left + d.viewport.x + q.boxX * z;
+      const screenRight = screenLeft + BOX_WIDTH * z;
+      const minLeft = rect.left + SIDEBAR_W + 8;
+      const maxRight = rect.right - 8;
+      // 比可视区还宽就无从补救，保持原样让用户自己平移
+      if (screenRight - screenLeft > maxRight - minLeft) return {};
+      let dx = 0;
+      if (screenLeft < minLeft) dx = minLeft - screenLeft;
+      else if (screenRight > maxRight) dx = maxRight - screenRight;
+      if (Math.abs(dx) < 1) return {};
+      return {
+        docs: {
+          ...s.docs,
+          [s.activeId]: { ...d, viewport: { ...d.viewport, x: d.viewport.x + dx } },
+        },
+      };
+    }),
+
   addBlock: (input) => {
     const id = uid('b');
     const { activeId, docs } = get();
@@ -223,6 +277,7 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
     set((s) => {
       const d = s.docs[s.activeId];
       const block = d.blocks.find((b) => b.id === input.blockId);
+      const side: Side = input.side ?? 'right';
       const q: Question = {
         id,
         blockId: input.blockId,
@@ -232,9 +287,11 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
         text: input.text,
         answer: '',
         status: 'streaming',
-        boxX: block ? block.x + block.width + COL_OFFSET : COL_OFFSET,
+        boxX: block ? columnX(block, side) : 0,
         boxY: input.anchorPoint.y - 24,
         boxH: DEFAULT_BOX_H,
+        side,
+        sideMode: input.sideMode ?? 'auto',
         pinned: false,
         collapsed: false,
         model: 'mock-model',
@@ -252,13 +309,43 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
   moveBox: (id, dx, dy) =>
     set((s) => {
       const d = s.docs[s.activeId];
-      const moved = d.questions.map((q) =>
-        q.id === id ? { ...q, boxX: q.boxX + dx, boxY: q.boxY + dy, pinned: true } : q,
-      );
+      const source = d.questions.find((q) => q.id === id);
+      const block = source ? d.blocks.find((b) => b.id === source.blockId) : undefined;
+      const moved = d.questions.map((q) => {
+        if (q.id !== id) return q;
+        const boxX = q.boxX + dx;
+        // 拖过代码块中线就换边：连线起点跟着走到另一侧，避免箭头横穿代码
+        const side: Side =
+          block && boxX + BOX_WIDTH / 2 < block.x + block.width / 2 ? 'left' : 'right';
+        return { ...q, boxX, boxY: q.boxY + dy, pinned: true, side, sideMode: 'manual' as const };
+      });
       // 拖动后立刻重排其余未锁定的框，避免被拖动的框压住别人
       return {
         docs: { ...s.docs, [s.activeId]: { ...d, questions: arrange(moved, d.blocks) } },
       };
+    }),
+
+  setSide: (id, side) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      const target = d.questions.find((q) => q.id === id);
+      const block = target ? d.blocks.find((b) => b.id === target.blockId) : undefined;
+      if (!target || !block) return {};
+      const questions = arrange(
+        d.questions.map((q) =>
+          q.id === id
+            ? {
+                ...q,
+                side,
+                sideMode: 'manual' as const,
+                boxX: columnX(block, side),
+                pinned: q.pinned,
+              }
+            : q,
+        ),
+        d.blocks,
+      );
+      return { docs: { ...s.docs, [s.activeId]: { ...d, questions } } };
     }),
 
   setBoxH: (id, h) => {

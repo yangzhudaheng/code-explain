@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { Anchor, Rect4 } from '../model/types';
+import type { Anchor, Rect4, Side } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { buildAnchor, measureAnchor, rangeToOffsets, trimOffsets } from './anchors';
+import { chooseSide } from './layout';
 import { startMockStream } from '../api/mockAi';
+
+type SideMode = 'auto' | 'left' | 'right';
 
 interface Pending {
   blockId: string;
@@ -10,12 +13,15 @@ interface Pending {
   anchorPoint: { x: number; y: number };
   anchorRects: Rect4[];
   screen: { x: number; y: number };
+  /** 自动模式下算出来的落点，用于在弹层里提前告知 */
+  autoSide: Side;
 }
 
 export function SelectionPlus() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
+  const [sideMode, setSideMode] = useState<SideMode>('auto');
   const addQuestion = useCanvas((s) => s.addQuestion);
 
   useEffect(() => {
@@ -91,12 +97,21 @@ export function SelectionPlus() {
       const btnX = Math.min(lastRect.right + 10, window.innerWidth - 40);
       const btnY = Math.max(16, Math.min(lastRect.top + lastRect.height / 2, window.innerHeight - 40));
 
+      const rootEl = document.querySelector('.canvas-root') as HTMLElement | null;
+      const autoSide = chooseSide({
+        block,
+        viewport: doc.viewport,
+        containerRect: rootEl?.getBoundingClientRect() ?? new DOMRect(),
+        anchorScreenX: lastRect.right,
+      });
+
       setPending({
         blockId: block.id,
         anchor: buildAnchor(block.content, start, end),
         anchorPoint: measured.point,
         anchorRects: measured.rects,
         screen: { x: btnX, y: btnY },
+        autoSide,
       });
       setOpen(false);
     };
@@ -109,13 +124,19 @@ export function SelectionPlus() {
     if (!pending) return;
     const question = text.trim();
     if (!question) return;
+    const side: Side = sideMode === 'auto' ? pending.autoSide : sideMode;
     const id = addQuestion({
       blockId: pending.blockId,
       anchor: pending.anchor,
       anchorPoint: pending.anchorPoint,
       anchorRects: pending.anchorRects,
       text: question,
+      side,
+      sideMode: sideMode === 'auto' ? 'auto' : 'manual',
     });
+    // 手动选左侧且代码块贴着画布左缘时，回答框会落到可视区外，这里平移画布把它拉回来
+    const rootEl = document.querySelector('.canvas-root') as HTMLElement | null;
+    if (rootEl) useCanvas.getState().ensureVisible(id, rootEl.getBoundingClientRect());
     startMockStream(id, question, pending.anchor.quote);
     window.getSelection()?.removeAllRanges();
     setPending(null);
@@ -126,7 +147,13 @@ export function SelectionPlus() {
   if (!pending) return null;
 
   const popX = Math.min(pending.screen.x - 8, window.innerWidth - 320);
-  const popY = Math.min(pending.screen.y + 34, window.innerHeight - 220);
+  const popY = Math.min(pending.screen.y + 34, window.innerHeight - 250);
+
+  const SIDE_OPTIONS: { id: SideMode; label: string }[] = [
+    { id: 'auto', label: `自动 · ${pending.autoSide === 'left' ? '左' : '右'}` },
+    { id: 'left', label: '左侧' },
+    { id: 'right', label: '右侧' },
+  ];
 
   return (
     <>
@@ -147,6 +174,21 @@ export function SelectionPlus() {
           <div className="pop-quote">
             <span className="pop-quote-tag">已选中</span>
             {pending.anchor.quote.replace(/\s+/g, ' ').slice(0, 90)}
+          </div>
+          <div className="pop-side">
+            <span className="pop-side-label">回答位置</span>
+            <div className="seg">
+              {SIDE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  className={sideMode === opt.id ? 'on' : ''}
+                  onClick={() => setSideMode(opt.id)}
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           <textarea
             autoFocus

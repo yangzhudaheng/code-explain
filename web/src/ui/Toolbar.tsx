@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useCanvas } from '../store/canvasStore';
+import { PATTERNS, swatchStyle, TONES } from '../canvas/background';
 
 export function Toolbar() {
   const [open, setOpen] = useState(false);
+  const [bgOpen, setBgOpen] = useState(false);
   const [code, setCode] = useState('');
   const [title, setTitle] = useState('Solution.java');
   const [lang, setLang] = useState('java');
 
   const zoom = useCanvas((s) => s.docs[s.activeId].viewport.zoom);
+  const bg = useCanvas((s) => s.docs[s.activeId].bg);
+  const setBg = useCanvas((s) => s.setBg);
   const zoomAt = useCanvas((s) => s.zoomAt);
   const resetView = useCanvas((s) => s.resetView);
   const arrangeAll = useCanvas((s) => s.arrangeAll);
@@ -26,6 +30,18 @@ export function Toolbar() {
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
   }, []);
+
+  // 点空白处收起背景面板
+  useEffect(() => {
+    if (!bgOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest('.bg-pop') || t?.closest('.tb-bg')) return;
+      setBgOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+  }, [bgOpen]);
 
   const centerRect = () => {
     const el = document.querySelector('.canvas-root') as HTMLElement | null;
@@ -54,6 +70,47 @@ export function Toolbar() {
         <button className="tb-btn" onClick={arrangeAll} title="重排所有未锁定的回答框">
           整理
         </button>
+        <span className="tb-sep" />
+        <div className="tb-bg-wrap">
+          <button
+            className={`tb-btn ${bgOpen ? 'on' : ''}`}
+            onClick={() => setBgOpen((v) => !v)}
+            title="切换画布背景"
+          >
+            背景
+          </button>
+          {bgOpen && (
+            <div className="bg-pop" onPointerDown={(e) => e.stopPropagation()}>
+              <div className="bg-pop-title">图案</div>
+              <div className="bg-opts">
+                {PATTERNS.map((p) => (
+                  <button
+                    key={p.id}
+                    className={`bg-opt ${bg.pattern === p.id ? 'on' : ''}`}
+                    onClick={() => setBg({ pattern: p.id })}
+                  >
+                    <span className="bg-swatch" style={swatchStyle(p.id, bg.tone)} />
+                    <span>{p.label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="bg-pop-title">底色</div>
+              <div className="bg-tones">
+                {TONES.map((t) => (
+                  <button
+                    key={t.id}
+                    className={`tone-opt ${bg.tone === t.id ? 'on' : ''}`}
+                    onClick={() => setBg({ tone: t.id })}
+                    title={t.label}
+                  >
+                    <span className="tone-dot" style={{ background: t.base }} />
+                    <span>{t.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <span className="tb-sep" />
         <button className="tb-icon" onClick={() => zoomStep(1 / 1.2)} title="缩小">
           －

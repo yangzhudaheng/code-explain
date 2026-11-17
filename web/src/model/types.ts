@@ -4,6 +4,19 @@ export interface Viewport {
   zoom: number;
 }
 
+/** 画布底纹图案 */
+export type BgPattern = 'dot' | 'grid' | 'line' | 'blank';
+/** 画布底色 */
+export type BgTone = 'warm' | 'white' | 'cool' | 'dark';
+
+export interface CanvasBg {
+  pattern: BgPattern;
+  tone: BgTone;
+}
+
+/** 回答框相对代码块的位置 */
+export type Side = 'left' | 'right';
+
 export interface CodeBlockModel {
   id: string;
   x: number;
@@ -48,6 +61,10 @@ export interface Question {
   boxX: number;
   boxY: number;
   boxH: number;
+  /** 回答框在代码块的哪一侧；影响连线起点与所在列 */
+  side: Side;
+  /** auto = 由选中位置自动判断，manual = 用户指定 */
+  sideMode: 'auto' | 'manual';
   pinned: boolean;
   collapsed: boolean;
   model: string;
@@ -59,4 +76,5 @@ export interface CanvasDoc {
   blocks: CodeBlockModel[];
   questions: Question[];
   viewport: Viewport;
+  bg: CanvasBg;
 }

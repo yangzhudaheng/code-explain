@@ -51,7 +51,6 @@ button {
 .grid {
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, #e2e3df 1px, transparent 1px);
   background-repeat: repeat;
   pointer-events: none;
   z-index: 0;
@@ -124,21 +123,85 @@ button {
   overflow: hidden;
 }
 
+/* 代码区：横向滚动时行号 sticky 跟随，不会被滚出视野 */
+.code-scroll {
+  display: flex;
+  align-items: stretch;
+  max-height: 520px;
+  overflow: auto;
+  background: #fff;
+}
+
+.gutter {
+  position: sticky;
+  left: 0;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 8px 12px 10px;
+  background: #fbfcfe;
+  border-right: 1px solid #f1f3f8;
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 3;
+  cursor: default;
+}
+
+.ln {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 20px;
+  color: #b3bdcf;
+  font-variant-numeric: tabular-nums;
+}
+
 .code {
   margin: 0;
-  padding: 12px 14px;
+  padding: 12px 16px 12px 10px;
   font-family: var(--mono);
   font-size: 13px;
   line-height: 20px;
   color: #23292f;
   white-space: pre;
-  overflow: auto;
-  max-height: 520px;
+  flex: 0 0 auto;
   tab-size: 4;
   user-select: text;
   cursor: text;
   position: relative;
   z-index: 1;
+}
+
+/* ---------- 语法着色 ---------- */
+
+.tok-kw {
+  color: #cf222e;
+}
+
+.tok-type {
+  color: #0550ae;
+}
+
+.tok-fn {
+  color: #8250df;
+}
+
+.tok-str {
+  color: #1a7f37;
+}
+
+.tok-num {
+  color: #b35900;
+}
+
+.tok-com {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.tok-anno {
+  color: #9a6700;
 }
 
 .code::selection,
@@ -156,10 +219,14 @@ button {
 .hl {
   position: absolute;
   background: rgba(47, 111, 237, 0.13);
-  border-left-style: solid;
-  border-left-color: rgba(47, 111, 237, 0.7);
   border-radius: 2px;
   pointer-events: none;
+}
+
+/* 只在锚点起始行画一条竖线，跨行选区不会每行都插一根 */
+.hl-start {
+  border-left-style: solid;
+  border-left-color: rgba(47, 111, 237, 0.7);
 }
 
 .hl-active {
@@ -559,6 +626,162 @@ button {
   height: 18px;
   background: #e8ebf1;
   margin: 0 3px;
+}
+
+.tb-btn.on {
+  background: var(--accent-soft);
+  color: #1d4ed8;
+}
+
+/* ---------- 背景选择 ---------- */
+
+.tb-bg-wrap {
+  position: relative;
+  display: flex;
+}
+
+.bg-pop {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 236px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 14px 36px rgba(16, 24, 40, 0.16);
+  z-index: 210;
+}
+
+.bg-pop-title {
+  font-size: 10.5px;
+  color: #97a3b6;
+  margin: 2px 2px 6px;
+}
+
+.bg-pop-title + .bg-opts,
+.bg-pop-title + .bg-tones {
+  margin-bottom: 10px;
+}
+
+.bg-opts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.bg-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #eaeef5;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 3px 5px;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.bg-opt:hover {
+  border-color: #c6d6f5;
+}
+
+.bg-opt.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #1d4ed8;
+}
+
+.bg-swatch {
+  display: block;
+  width: 100%;
+  height: 24px;
+  border-radius: 5px;
+  background-repeat: repeat;
+}
+
+.bg-tones {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.tone-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  padding: 3px 2px;
+  font-size: 10px;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.tone-opt:hover {
+  background: #f5f7fb;
+}
+
+.tone-opt.on {
+  border-color: var(--accent);
+  color: #1d4ed8;
+}
+
+.tone-dot {
+  width: 100%;
+  height: 16px;
+  border-radius: 5px;
+  border: 1px solid #e6eaf2;
+}
+
+/* ---------- 回答位置选择 ---------- */
+
+.pop-side {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.pop-side-label {
+  font-size: 10.5px;
+  color: #8b98ad;
+  flex: none;
+}
+
+.seg {
+  display: flex;
+  background: #f2f5fa;
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.seg button {
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 10.5px;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.seg button:hover {
+  color: #33507f;
+}
+
+.seg button.on {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
 }
 
 /* ---------- 侧栏 ---------- */
