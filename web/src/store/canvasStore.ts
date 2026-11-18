@@ -151,6 +151,9 @@ interface CanvasStore {
   toggleCollapse: (id: string) => void;
   removeQuestion: (id: string) => void;
   appendAnswer: (id: string, chunk: string) => void;
+  /** 整体替换回答内容（重新回答前先清空、或拿服务端补偿时用） */
+  setAnswer: (id: string, answer: string) => void;
+  setModel: (id: string, model: string) => void;
   setStatus: (id: string, status: Question['status']) => void;
   arrangeAll: () => void;
 
@@ -616,6 +619,34 @@ export const useCanvas = create<CanvasStore>((set, get) => ({
             questions: d.questions.map((q) =>
               q.id === id ? { ...q, answer: q.answer + chunk } : q,
             ),
+          },
+        },
+      };
+    }),
+
+  setAnswer: (id, answer) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      return {
+        docs: {
+          ...s.docs,
+          [s.activeId]: {
+            ...d,
+            questions: d.questions.map((q) => (q.id === id ? { ...q, answer } : q)),
+          },
+        },
+      };
+    }),
+
+  setModel: (id, model) =>
+    set((s) => {
+      const d = s.docs[s.activeId];
+      return {
+        docs: {
+          ...s.docs,
+          [s.activeId]: {
+            ...d,
+            questions: d.questions.map((q) => (q.id === id ? { ...q, model } : q)),
           },
         },
       };

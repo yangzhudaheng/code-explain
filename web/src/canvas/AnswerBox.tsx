@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { Question } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
+import { askAi, cancelAsk } from '../ai/ask';
+import { MarkdownLite } from './MarkdownLite';
 
 export function AnswerBox({ q }: { q: Question }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -66,6 +68,15 @@ export function AnswerBox({ q }: { q: Question }) {
           {q.text}
         </span>
         <div className="answer-actions">
+          {q.status !== 'streaming' && (
+            <button
+              className="box-btn"
+              title={q.status === 'error' ? '重新回答' : '重新生成一次回答'}
+              onClick={() => void askAi(q.id)}
+            >
+              ↻
+            </button>
+          )}
           <button
             className="box-btn"
             title={q.side === 'right' ? '移到代码左侧' : '移到代码右侧'}
@@ -89,7 +100,15 @@ export function AnswerBox({ q }: { q: Question }) {
           <button className="box-btn" title="折叠/展开" onClick={() => toggleCollapse(q.id)}>
             {q.collapsed ? '＋' : '－'}
           </button>
-          <button className="box-btn danger" title="删除" onClick={() => removeQuestion(q.id)}>
+          <button
+            className="box-btn danger"
+            title="删除"
+            onClick={() => {
+              // 先断流再删：否则后端还在生成，前端却已经找不到这条问答
+              cancelAsk(q.id);
+              removeQuestion(q.id);
+            }}
+          >
             ✕
           </button>
         </div>
@@ -99,9 +118,11 @@ export function AnswerBox({ q }: { q: Question }) {
         <div className="answer-body">
           {q.answer ? (
             <>
-              {q.answer}
+              <MarkdownLite text={q.answer} />
               {q.status === 'streaming' && <span className="caret" />}
             </>
+          ) : q.status === 'error' ? (
+            <div className="answer-empty">生成失败，点标题栏的 ↻ 重试</div>
           ) : (
             <div className="answer-skeleton">
               <span />

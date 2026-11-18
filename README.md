@@ -14,11 +14,15 @@
   用根目录 `Dockerfile.vercel` 做单容器（前端打进 jar 的 `static/`），一个域名同时服务页面和接口
 - **画布增强**：背景切换、回答框左右分侧、代码行号、语法高亮 已完成
 - **代码块编辑**：编辑文本/文件名/语言、清空、删除代码块，改完自动重定位已有问答的锚点
-- **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（6 张表）+ Neon 连接串兼容 + `/api/db/ping` 自检
+- **M1 后端骨架**：Spring Boot 3 + Flyway 迁移（V1 六张表 → V2 加图形码会话表）+ Neon 连接串兼容 + `/api/db/ping` 自检
 - **M2 注册登录**：图形码 + 邮件验证码（QQ SMTP 465）+ 频控 + BCrypt + httpOnly Cookie 会话
 - **M3 画布持久化**：多画布增删改查 + 整体快照存 JSONB + `version` 乐观锁 + 前端防抖自动保存；
-  刷新不丢内容，两标签页同改会提示冲突并让你选「重新加载 / 以我为准」；47 个后端测试全过
-- M4~M6：未开始（下一步是接 AI 问答）
+  刷新不丢内容，两标签页同改会提示冲突并让你选「重新加载 / 以我为准」
+- **M4 AI 问答**：DeepSeek（OpenAI 兼容）流式回答。Key 由用户自填、AES-GCM 加密存库、接口只回掩码；
+  回答按 SSE 逐字推到画布上的方框里，`answers` 表留调用记录与 token 用量
+- **后端 85 个测试全过**（认证 12 / 图形码 8 / JWT 7 / 画布 11 / 迁移 8 / 数据源 6 /
+  AI 设置 7 / SSRF 7 / 加密 7 / 提示词 5 / 问答 7）
+- M6：未开始（导出、性能虚拟化等打磨项）
 
 ## 目录
 
@@ -48,6 +52,8 @@ npm run dev     # http://localhost:5173
 | 工具栏「整理」 | 解除锁定并重排所有回答框 |
 | 工具栏「背景」 | 切换画布图案（点阵/方格/横线/纯色）与底色（米白/纯白/雾蓝/深灰），按画布独立保存 |
 | 提问弹层「回答位置」 | 自动（按选中位置判断左右）/ 左侧 / 右侧 |
+| 回答框标题栏 ↻ | 重新回答（改完代码再用，会用当前代码重新生成） |
+| 工具栏「AI 设置」 | 填 DeepSeek 的 API Key、模型与接口地址；「测试连接」发一条最短请求验证 |
 | 回答框标题栏 ← → | 把该回答框移到代码块的另一侧 |
 | 代码块标题栏「编辑」 | 就地编辑代码：Tab 缩进 4 空格、Ctrl+Enter 保存、Esc 取消；可改文件名与语言 |
 | 代码块标题栏「删除」 | 二次确认后删除整块，连带该块的提问与回答框 |
@@ -97,9 +103,11 @@ mvn test
 
 错误统一为 `{code, message, field?}`，`code` 取值见 `common/ErrorCode.java`。
 
-**为什么图形码答案存服务端**：存 cookie 或签名里等于把答案交给攻击者。代价是需要服务端有状态。
-单容器单实例暂时够用，但**实例休眠重启会清空内存里的答案**，用户正卡在提交那一步就会看到
-「验证码已过期」——所以验证码答案和数据频控计数最终要落库（见待办里的多实例/重启问题）。
+**为什么图形码答案存服务端**：存 cookie 或签名里等于把答案交给攻击者。
+图形码答案存在 `captcha_sessions` 表（只存 SHA-256，5 分钟过期，校验一次即删），
+不存内存——Vercel 容器闲置 5 分钟就缩容、多实例之间也不共享内存，
+用户「拿到图 → 慢慢输入 → 提交」时请求可能落到另一个实例上，答案是 null，
+于是刚生成的验证码提示已过期。这类问题本地永远复现不了，只能靠共享存储解决。
 
 ## 画布接口（M3）
 
@@ -123,6 +131,60 @@ mvn test
   （`CANVAS_MAX_DATA_BYTES`，Vercel 函数请求体上限 4.5MB，留出包装余量）。
 - **前端不存 `anchorRects`**：那是逐行像素矩形，几百 KB 且能由 `anchor` + 文本重算；
   刷新后 `CodeBlock` 会重新测量。存进快照既臃肿，换了字体还会错。
+
+## AI 问答（M4）
+
+模型由**用户自己提供 Key**，站点不内置任何免费额度。预设只有 DeepSeek
+（`https://api.deepseek.com` + `deepseek-chat`），因为它是 OpenAI 兼容协议，
+换别家只需改接口地址与模型名。
+
+**上线前必须先配 `APP_ENC_KEY`**（32 字节 Base64）：
+
+```bash
+openssl rand -base64 32      # 填进 Vercel / 服务器的 APP_ENC_KEY
+```
+
+没配时保存 Key 的接口会明确报错而不是退化成明文存储；换掉这个值等于让所有已存 Key 失效
+（解密失败 → 提示用户重填），这也是刻意的。
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/me/ai-settings` | 返回 `{provider, baseUrl, model, apiKeyMask, hasKey, keyEncryptionReady, presets}`，**永不含明文 Key** |
+| `PUT /api/me/ai-settings` | `{provider?, baseUrl?, model?, apiKey?}`；`apiKey` 留空表示不修改已有 Key，`clearKey:true` 清除 |
+| `POST /api/me/ai-settings/test` | 用已保存的配置发一条 `max_tokens:1` 的请求，返回 `{ok, latencyMs, model, error?}` |
+| `POST /api/canvases/{id}/questions` | `{clientId, blockId, anchor, text, code?, language?, title?}` → `{questionId, clientId}`；按 `clientId` 幂等 |
+| `POST /api/questions/{id}/answer` | 请求体带上当前 `code`，响应是 `text/event-stream` |
+
+### SSE 事件
+
+```
+event: start   data: {"answerId":"…","model":"deepseek/deepseek-chat"}
+event: delta   data: {"text":"增量"}
+event: done    data: {"model":"deepseek/deepseek-chat","promptTokens":812,"completionTokens":230}
+event: error   data: {"code":"AI_UPSTREAM_ERROR","message":"API Key 无效或没有权限…"}
+```
+
+`start` 之前的所有失败（未登录、问题不存在、没配 Key）都是普通 JSON 4xx，
+所以前端要先看响应头再决定怎么读——这也是为什么回答接口用 `POST` 而不是 `GET`：
+它需要把「用户此刻屏幕上的代码」带上去，而快照是 700ms 防抖保存的，
+刚粘完代码立刻提问时快照里还没有这段代码，模型会拿到空上下文然后瞎编。
+
+### 几条刻意的设计
+
+- **Key 只进不出**：AES-256-GCM 加密落库（`[12 字节随机 IV][密文+tag]`），接口只回 `sk-****3f8a`
+  这种掩码；解密只发生在真正调模型的那一刻，明文不进日志、不进响应。
+- **base-url 做 SSRF 防护**：强制 https，拒绝 localhost / `*.internal` / 用户信息段，
+  以及解析到 `127/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`100.64/10`、`::1` 的地址。
+  用户能填 URL 就等于给了他一个内网探测器，云环境里的 metadata 服务是常见目标。
+  局限写在代码注释里：只在保存时校验一次，DNS 重绑定理论上仍可绕过。
+- **回答存两处，各管一段**：画布快照里的 `questions[].answer` 负责渲染（刷新即恢复）；
+  `questions` / `answers` 表只存调用记录（审计、重答历史、token 统计），不参与回读。
+- **断线不丢内容**：流式过程中每 40 个增量落一次库，用户关页面时已生成的部分仍在；
+  前端切画布或删问答会 abort 上游请求，不为没人看的内容继续计费。
+- **提示词带行号**：用户对照的是画布上的行号栏，所以代码按 `12| xxx` 形式喂给模型；
+  超过 6000 字符只取选中区域上下各 40 行，并注明省略了多少行。
+- **费用**：每次提问最多 900 输出 token；回答框宽度只有 320px，几千字的长文在那里读不了，
+  所以提示词明确要求 500 字以内、不要整段复述代码。
 
 ## 自动保存与冲突
 
@@ -223,7 +285,7 @@ mvn test
 |---|---|
 | `/` | 登录页（HTML，不是 JSON） |
 | `/api/ping` | `{"app":"code-explain-api","java":"21.0.13","ok":true,...}` |
-| `/api/db/ping` | PostgreSQL 版本 + 迁移版本 + 7 张表清单 |
+| `/api/db/ping` | PostgreSQL 版本 + 迁移版本 + 8 张表清单 |
 | `/api/canvases` | 未登录时 `401 {"code":"UNAUTHORIZED"}` |
 
 拿到域名后，把 `APP_BASE_URL` 改成真实地址（只影响验证码邮件里的链接，不影响启动）。
@@ -247,5 +309,5 @@ mvn test
 | `CAPTCHA_DEBUG` | 仅本地自动化测试用，打印图形码答案；生产必须 `false` |
 | `CANVAS_MAX_PER_USER` | 单账号画布上限，默认 50 |
 | `CANVAS_MAX_DATA_BYTES` | 单次保存快照上限，默认 2097152（2MB） |
-| `APP_ENC_KEY` | M4 用：用户模型 API Key 的加密主密钥（AES-GCM，Base64） |
+| `APP_ENC_KEY` | 用户模型 API Key 的加密主密钥（AES-256-GCM，Base64 的 32 字节）；**M4 起必配**，否则不能保存 Key |
 | `APP_BASE_URL` | 站点对外地址，用于邮件里的链接 |

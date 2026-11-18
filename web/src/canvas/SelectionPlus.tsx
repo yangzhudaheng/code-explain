@@ -3,7 +3,7 @@ import type { Anchor, Rect4, Side } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { buildAnchor, measureAnchor, rangeToOffsets, trimOffsets } from './anchors';
 import { chooseSide } from './layout';
-import { startMockStream } from '../api/mockAi';
+import { askAi } from '../ai/ask';
 
 type SideMode = 'auto' | 'left' | 'right';
 
@@ -140,7 +140,8 @@ export function SelectionPlus() {
     // 手动选左侧且代码块贴着画布左缘时，回答框会落到可视区外，这里平移画布把它拉回来
     const rootEl = document.querySelector('.canvas-root') as HTMLElement | null;
     if (rootEl) useCanvas.getState().ensureVisible(id, rootEl.getBoundingClientRect());
-    startMockStream(id, question, pending.anchor.quote);
+    // 提问先落库再开流：没配 Key 时 askAi 会自动弹出「AI 设置」
+    void askAi(id);
     window.getSelection()?.removeAllRanges();
     setPending(null);
     setOpen(false);

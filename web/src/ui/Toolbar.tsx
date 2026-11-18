@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useCanvas } from '../store/canvasStore';
 import { PATTERNS, swatchStyle, TONES } from '../canvas/background';
+import { AiSettings } from './AiSettings';
 
 export function Toolbar() {
   const [open, setOpen] = useState(false);
   const [bgOpen, setBgOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [code, setCode] = useState('');
   const [title, setTitle] = useState('Solution.java');
   const [lang, setLang] = useState('java');
@@ -42,6 +44,13 @@ export function Toolbar() {
     window.addEventListener('pointerdown', onDown);
     return () => window.removeEventListener('pointerdown', onDown);
   }, [bgOpen]);
+
+  // 提问时如果发现没配 Key，ask 流程会广播这个事件把设置弹窗拉起来
+  useEffect(() => {
+    const openSettings = () => setAiOpen(true);
+    window.addEventListener('ce:open-ai-settings', openSettings);
+    return () => window.removeEventListener('ce:open-ai-settings', openSettings);
+  }, []);
 
   const centerRect = () => {
     const el = document.querySelector('.canvas-root') as HTMLElement | null;
@@ -122,7 +131,13 @@ export function Toolbar() {
         <button className="tb-btn" onClick={resetView} title="回到初始视图">
           复位
         </button>
+        <span className="tb-sep" />
+        <button className="tb-btn" onClick={() => setAiOpen(true)} title="配置模型 API Key">
+          AI 设置
+        </button>
       </div>
+
+      <AiSettings open={aiOpen} onClose={() => setAiOpen(false)} />
 
       {open && (
         <div className="modal-mask" onPointerDown={(e) => e.stopPropagation()} onClick={() => setOpen(false)}>

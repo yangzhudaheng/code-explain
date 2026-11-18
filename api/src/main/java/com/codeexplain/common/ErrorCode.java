@@ -19,6 +19,7 @@ public enum ErrorCode {
     EMAIL_CODE_TOO_MANY_ATTEMPTS(HttpStatus.BAD_REQUEST, "验证码尝试次数过多，请重新获取"),
     PASSWORD_TOO_WEAK(HttpStatus.BAD_REQUEST, "密码至少 8 位，且需同时包含字母和数字"),
     EMAIL_NOT_VERIFIED(HttpStatus.BAD_REQUEST, "邮箱尚未验证"),
+    BASE_URL_FORBIDDEN(HttpStatus.BAD_REQUEST, "模型地址不合法：必须是公网 https 地址"),
 
     // 401 —— 没登录或凭据错误
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "请先登录"),
@@ -27,6 +28,7 @@ public enum ErrorCode {
     // 404 —— 资源不存在，或不属于当前用户（不区分，避免探测别人的 id）
     NOT_FOUND(HttpStatus.NOT_FOUND, "接口不存在"),
     CANVAS_NOT_FOUND(HttpStatus.NOT_FOUND, "画布不存在或已被删除"),
+    QUESTION_NOT_FOUND(HttpStatus.NOT_FOUND, "该提问不存在或已被删除"),
 
     // 405 —— 路径存在但 HTTP 方法不对
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "请求方法不支持"),
@@ -42,9 +44,12 @@ public enum ErrorCode {
     // 429 —— 触发频控
     RATE_LIMITED_EMAIL(HttpStatus.TOO_MANY_REQUESTS, "该邮箱请求过于频繁，请 60 秒后再试"),
     RATE_LIMITED_IP(HttpStatus.TOO_MANY_REQUESTS, "今日验证码发送次数已达上限，请明天再试"),
+    AI_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "模型服务限流了，请稍等几秒再试"),
 
     // 500 —— 服务端问题
     MAIL_SEND_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "验证码邮件发送失败，请稍后重试"),
+    AI_NOT_CONFIGURED(HttpStatus.BAD_REQUEST, "还没配置模型 API Key，请先在右上角「AI 设置」里填一个"),
+    AI_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY, "模型服务返回错误"),
     INTERNAL(HttpStatus.INTERNAL_SERVER_ERROR, "服务器开小差了，请稍后重试");
 
     private final HttpStatus status;

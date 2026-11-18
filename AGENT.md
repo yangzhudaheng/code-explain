@@ -1,8 +1,8 @@
 # AGENT.md — code-explain 项目开发规范
 
 > 本文件是项目的**唯一权威约束文档**。任何人（包括 AI Agent）接手本项目，先读本文件，再动代码。
-> 状态：`规划完成，等待用户下达「开始」指令。`
-> 最后更新：2026-11-17
+> 状态：`M0~M5 已完成，M4（AI 问答）已落地，下一步 M6 打磨。`
+> 最后更新：2026-11-18
 
 ---
 
@@ -16,7 +16,7 @@
 | 仓库所有者 | yangzhudaheng |
 | 部署 | GitHub → Vercel（web 静态 + api 容器），公网 URL |
 | 形态 | 浏览器多人可用，账号隔离 |
-| 当前阻塞 | Vercel Hobby 是否开放容器（M0.5 验证）；域名（仅影响国内可达性） |
+| 当前阻塞 | 无（Vercel 容器已验证可用；域名污染只影响国内直连，需代理或换国内服务器） |
 
 ---
 
@@ -76,10 +76,24 @@
     仓库是私有的（`git clone` 要 Token）、国内机器拉 Docker Hub 与 Maven Central 都不稳、
     2G 内存同时跑 npm+mvn 有 OOM 风险——三个失败点合成一个，就是「上传 26MB 的 jar」。
     `deploy/build-package.sh` 负责这条链路，别再在服务器上写「先 npm install 再 mvn」的步骤。
-19. **内存态（验证码答案、频控计数）在会休眠的平台上不可靠，单机也不能假设它永远在。**
-    Render 免费实例 15 分钟无访问即休眠，重启后 Caffeine 里的答案全丢，
-    用户会看到「验证码已过期」。**接 AI（M4）之前必须把这两样落库**，
-    这是已知欠债，不是「以后再说」。
+19. **任何跨请求的状态都不能放 JVM 内存。**
+    最初的图形码答案存在 Caffeine 里，Vercel 容器闲置 5 分钟就缩容、多实例之间也不共享内存，
+    于是「拿到图 → 慢慢输入 → 提交」可能落到另一个实例上，答案是 null，
+    用户看到「验证码已过期」——而那张图生成不到一分钟。这类 bug 本地永远复现不了。
+    **已改为 `captcha_sessions` 表**（只存 SHA-256、5 分钟 TTL、`delete ... returning` 原子消费）。
+    发信频控从一开始就在 `email_codes` 表里按行统计，没有内存计数。
+    新增任何「短生命周期状态」先问一句：多实例 / 重启后还成立吗？
+20. **AI 问答的提示词必须带行号，且只喂必要上下文。**
+    用户对照的是画布行号栏，回答里说「第 5 行」才对得上；整段代码全塞进去，
+    模型会泛泛复述一遍。超过 6000 字符只取选中区域上下各 40 行，并注明省略行数。
+    回答框宽度只有 320px，所以提示词硬要求「500 字以内、不要整段复述代码」。
+21. **回答接口用 `POST` 而不是 `GET`（对设计稿的偏离）。**
+    它需要把「用户此刻屏幕上的代码」一起带上去：画布快照是 700ms 防抖保存的，
+    刚粘完代码立刻提问时快照里还没有这段代码，模型会拿到空上下文然后瞎编。
+    带请求体也让「改完代码重新回答」天然成立。
+22. **解密只发生在调模型的那一刻。** API Key 的明文不允许出现在日志、响应、
+    异常栈、快照里；`answers` 表只记 `provider/model`，绝不记 Key。
+    接口回显只有掩码（`sk-****3f8a`），这条由 `AiSettingsApiTest` 断言守着。
 
 ---
 
@@ -101,7 +115,7 @@
 | 关注点 | 选择 |
 |---|---|
 | 语言/框架 | Java 21 + Spring Boot 3.3.x，Maven 单模块 |
-| 依赖 | `web`, `validation`, `jdbc`（**不用 data-jpa**，理由见下）, `flyway`, `caffeine`, `mail`, `spring-security-crypto`（只取 BCrypt，不引整个 Security 过滤器链） |
+| 依赖 | `web`, `validation`, `jdbc`（**不用 data-jpa**，理由见下）, `flyway`, `mail`, `spring-security-crypto`（只取 BCrypt，不引整个 Security 过滤器链） |
 | 流式转发 | Java 21 虚拟线程 + `java.net.http.HttpClient` + `SseEmitter`（不引 WebFlux） |
 | 数据库 | PostgreSQL（Neon 免费版，Vercel Marketplace 一键集成） |
 | 迁移 | Flyway，`V1__init.sql` 起步，禁止手工改线上表 |
@@ -120,6 +134,8 @@
 > 5. JWT 不引 jjwt，手写 HS256（约 150 行）。但必须守住三条：只接受 `alg=HS256`（挡住
 >    `alg=none` 与算法混淆）、签名比对用 `MessageDigest.isEqual`（常量时间）、
 >    配了密钥但不足 32 字节直接启动失败（不做静默降级）。
+> 6. `caffeine` 依赖已移除：图形码答案落库后没有任何进程内缓存，留着只会让人误以为还有
+>    「内存态」需要维护。移除依赖比留一个「以后可能用得上」的库更安全。
 | 会话 | JWT HS256 放 **httpOnly + Secure + SameSite=Lax Cookie**（同源代理使 Cookie 可用，避免 localStorage 被 XSS 偷） |
 | 部署 | `Dockerfile.vercel`，监听 `$PORT` |
 
@@ -129,7 +145,7 @@
 |---|---|---|
 | 注册人机校验 | 自研图形码（easy-captcha）+ 频控 | 抽象 `CaptchaProvider`，后续可换阿里云验证码 2.0 |
 | 发信 | QQ 邮箱 SMTP，**465 SSL** | 25 端口平台封禁；备用方案为 HTTPS API 发信（Brevo/Resend） |
-| AI | 用户自带 Key，预设 6 个 Provider | 不内置任何免费额度 |
+| AI | 用户自带 Key，**预设只有 DeepSeek**，其余走自定义 base_url | 不内置任何免费额度。不做「六个 Provider 随便选」：没有真实 Key 就无法验证，最后只是一排点了报错的按钮 |
 
 ---
 
@@ -203,8 +219,9 @@ code-explain/
 │       │   ├── anchors.ts      # 字符偏移 ↔ Range 互转
 │       │   ├── workspace.ts    # 首屏加载画布、首次示例问答注入
 │       │   └── layout.ts       # 避让与自动整理
-│       ├── ui/                 # 登录页、侧栏、工具栏
-│       ├── api/                # client.ts（统一 fetch/HttpError）+ auth.ts + canvas.ts
+│       ├── ai/                 # M4：提问→落库→流式回答的编排（ask.ts）
+│       ├── ui/                 # 登录页、侧栏、工具栏、AI 设置弹窗
+│       ├── api/                # client.ts（统一 fetch/HttpError）+ auth.ts + canvas.ts + ai.ts + qa.ts（SSE 解析）
 │       └── store/
 │           ├── canvasStore.ts  # 画布状态与全部交互动作
 │           ├── persist.ts      # 防抖自动保存、409 冲突处理
@@ -214,14 +231,14 @@ code-explain/
     ├── pom.xml
     └── src/main/
         ├── java/com/codeexplain/
-        │   ├── auth/           # 图形码、邮件码、登录
+        │   ├── auth/           # 图形码（落库）、邮件码、登录
         │   ├── canvas/         # 画布 CRUD + 乐观锁
-        │   ├── qa/             # M4：问题、回答、SSE
-        │   ├── ai/             # M4：Provider 抽象、SSRF 校验、加密
+        │   ├── qa/             # M4：提问、提示词、SSE 流式回答
+        │   ├── ai/             # M4：Provider 预设、SSRF 校验、AES-GCM、OpenAI 兼容客户端
         │   └── common/         # 异常、错误码、JWT
         └── resources/
             ├── application.yml
-            └── db/migration/V1__init.sql
+            └── db/migration/V1__init.sql / V2__captcha_sessions_and_client_id.sql
 ```
 
 ---
@@ -235,11 +252,16 @@ code-explain/
 ```sql
 users(id uuid pk, email text, lower(email) 唯一索引, password_hash, status, created_at, email_verified_at)
 email_codes(id uuid, email, code_hash, purpose, expires_at, consumed_at, ip, attempts)
+captcha_sessions(id text pk, answer_hash, ip, expires_at, created_at)          -- V2：图形码答案落库
 canvases(id uuid, user_id, title, data jsonb, version int default 0, created_at, updated_at, deleted_at)
-questions(id uuid, canvas_id, block_id, anchor jsonb, text, box_x, box_y, pinned bool, created_at)  -- M4 用
-answers(id uuid, question_id, content text, status, model, prompt_tokens, completion_tokens, created_at) -- M4 用
+questions(id uuid, canvas_id, client_id text, block_id, anchor jsonb, text, box_x, box_y, pinned bool, created_at)
+answers(id uuid, question_id, content text, status, model, prompt_tokens, completion_tokens, created_at)
 user_ai_settings(user_id pk, provider, base_url, model, api_key_cipher, api_key_mask, extra jsonb, updated_at)
 ```
+
+`questions.client_id`（V2 新增）是前端生成的 `q_xxx`，与 `canvas_id` 组成唯一索引
+（`where client_id is not null` 的部分索引）：快照里的问答靠它回指这条调用记录。
+**不要**把 `questions.id` 改成 text 来对齐——换主键会让所有外键跟着改，风险远大于收益。
 
 `canvases.data` 结构（M3 实际写入的形态）：
 
@@ -429,15 +451,19 @@ PUT    /api/canvases/{id}                   {title, data, baseVersion} → 200 �
 DELETE /api/canvases/{id}                   → 204（软删，deleted_at 非空）
 ```
 
-M4 待加（尚未实现）：
+M4 已实现（与设计稿的偏差见下方）：
 
 ```
-POST   /api/canvases/{id}/questions         {blockId, anchor, text} → {questionId}
-GET    /api/questions/{id}/answer           SSE: event=delta|done|error
-GET    /api/me/ai-settings                  → {provider, baseUrl, model, apiKeyMask}
-PUT    /api/me/ai-settings                  {provider, baseUrl, model, apiKey?}
-POST   /api/me/ai-settings/test             → {ok, latencyMs, error?}
+GET    /api/me/ai-settings                  → {provider, baseUrl, model, apiKeyMask, hasKey, keyEncryptionReady, presets}
+PUT    /api/me/ai-settings                  {provider?, baseUrl?, model?, apiKey?, clearKey?} → 同上（apiKey 留空 = 不改）
+POST   /api/me/ai-settings/test             → {ok, latencyMs, model, error?}（失败也 200，文案可读）
+POST   /api/canvases/{id}/questions         {clientId, blockId, anchor, text, code?, language?, title?} → {questionId, clientId}
+POST   /api/questions/{id}/answer           {code?, language?, title?} → text/event-stream
 ```
+
+SSE 事件：`start{answerId,model}` → `delta{text}`* → `done{model,promptTokens,completionTokens}`；
+失败推 `error{code,message}`。**`start` 之前的所有失败都是普通 JSON 4xx**（没配 Key → 400 `AI_NOT_CONFIGURED`），
+前端必须先看响应头再决定怎么读。
 
 **设计稿与实现的偏差**：
 
@@ -446,6 +472,7 @@ POST   /api/me/ai-settings/test             → {ok, latencyMs, error?}
 | `GET /api/me` | `GET /api/auth/me` | 与其余认证接口同一前缀，拦截器白名单只需维护一处 |
 | `PATCH /api/canvases/{id}` 只改标题 | 并入 `PUT` 全量 | 标题与快照一起提交通道更少；前端本来就要保存快照，没必要两条路径 |
 | `PUT /api/canvases/{id}/data` | `PUT /api/canvases/{id}` | 画布没有「除 data 之外」的可写字段，多一层路径无收益 |
+| `GET /api/questions/{id}/answer`（无请求体） | `POST /api/questions/{id}/answer`（带当前 code） | 快照有 700ms 防抖，刚粘完代码立刻提问时快照里还没有它；带请求体也让「改完重答」天然成立 |
 
 **错误码**：统一错误体 `{code, message, field?}`，前端按 `code` 分支。
 
@@ -455,6 +482,11 @@ POST   /api/me/ai-settings/test             → {ok, latencyMs, error?}
 | `CANVAS_VERSION_CONFLICT` | 409 | `baseVersion` 落后，别人已保存过 |
 | `CANVAS_LIMIT_REACHED` | 409 | 单账号画布数达上限（默认 50，`CANVAS_MAX_PER_USER` 可调） |
 | `CANVAS_TOO_LARGE` | 413 | 单次快照超过 2MB（`CANVAS_MAX_DATA_BYTES` 可调） |
+| `QUESTION_NOT_FOUND` | 404 | 提问不存在 / 不属于当前账号 |
+| `BASE_URL_FORBIDDEN` | 400 | 模型地址不是公网 https，或解析到了内网 / 本机 |
+| `AI_NOT_CONFIGURED` | 400 | 还没保存 API Key，或密文解不开（主密钥换过） |
+| `AI_UPSTREAM_ERROR` | 502 | 模型服务返回错误（401/402/404 已翻译成可照做的中文） |
+| `AI_RATE_LIMITED` | 429 | 模型服务限流 |
 
 ---
 
@@ -501,7 +533,7 @@ git push -u origin main
 | **M1 后端骨架** ✅ | Spring Boot + Flyway（V1: 6 张表）+ Neon 连接串兼容 | 内嵌 PG 跑真实迁移通过；`/api/db/ping` 返回 schema 版本与表清单；无库时可用 `DB_OPTIONAL=true` 启动 |
 | **M2 注册登录** ✅ | 图形码 + 6 位邮件码 + 频控 + BCrypt + httpOnly Cookie 会话 | 真实 Neon 上完成注册/登录/刷新/登出；真实 QQ SMTP 发信成功；11 个认证用例覆盖边界 |
 | **M3 画布持久化** ✅ | 多画布 CRUD、jsonb 快照、`version` 乐观锁、前端防抖自动保存 | 刷新不丢内容；两标签页同改触发 409 并有「重新加载 / 以我为准」两个出口 |
-| **M4 AI 问答** | Provider 抽象、SSRF 校验、加密存储、SSE | DeepSeek 单预设 + 自定义 base_url；Key 掩码回显；内网地址被拒 |
+| **M4 AI 问答** ✅ | Provider 抽象、SSRF 校验、加密存储、SSE | DeepSeek 单预设 + 自定义 base_url；Key 掩码回显；内网地址被拒；流式增量落库；`AI_NOT_CONFIGURED` 自动弹出设置 |
 | **M5 上线** ✅ | GitHub push → Vercel **单容器**（非双项目） | 线上 <https://code-explain-nine.vercel.app> 走通注册→登录→建画布→自动保存 |
 | **M6 打磨** | 代码高亮、导出 PNG、性能虚拟化 | 200 个节点下拖动不掉帧 |
 
@@ -533,14 +565,36 @@ git push -u origin main
       200 且 PNG 有字（Alpine 字体装对了）、`/api/canvases` 未登录 → 401、真实 QQ 邮箱注册登录成功
 - [ ] **区域优化（有体感，值得做）**：Vercel 函数默认在华盛顿、Neon 在新加坡，
       `/api/db/ping` 实测 1601ms。项目 `Settings → Functions → Function Region` 改 `sin1`
-      后重新部署，预期降到 50ms 级
+      后重新部署，预期降到 50ms 级（改区域会触发重新部署，注意 `Settings → Functions` 里
+      **Fluid compute 必须开着**，否则容器函数直接拒绝部署）
 - [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）
 - [ ] 域名（可选）：不绑域名则只有挂代理的人能打开 `*.vercel.app`
-- [ ] **M4 动手前必须先解决**：`questions.id` 是 uuid 列，而画布快照里的问答 id 是前端生成的
-      `q_xxx` 文本；接 AI 落库时要加 V2 迁移（新增 `client_id text` 或把主键改 text），
-      否则「快照里的问答」与「questions 表」无法关联
-- [ ] **M4 动手前必须先解决**：验证码答案与频控计数存在 JVM 内存（Caffeine），
-      Vercel 容器多实例或重启后会随机报「验证码已过期」。改成存 Neon 一张小表
+- [x] **M4 前置一**：V2 迁移给 `questions` 加 `client_id text` + (canvas_id, client_id) 部分唯一索引，
+      快照里的 `q_xxx` 与 `questions` 表从此能对上
+- [x] **M4 前置二**：图形码答案从 Caffeine 迁到 `captcha_sessions` 表
+      （SHA-256 + 5 分钟 TTL + `delete ... returning` 原子消费），多实例/重启不再随机报过期
+- [x] **M4 本体**：`ai/`（SecretBox、BaseUrlGuard、ChatClient、AiSettings*）+ `qa/`
+      （QuestionRepository、AnswerRepository、ExplainPrompt、QaService、QaController）+
+      前端 `ui/AiSettings.tsx`、`ai/ask.ts`、`api/{ai,qa}.ts`；新增 33 个测试，后端共 85 个全过
+- [ ] 待确认（有真实 Key 才能验）：DeepSeek 的 `stream_options.include_usage` 是否回 token 用量；
+      `deepseek-reasoner` 的 `reasoning_content` 目前不展示（只取 `content`），要不要显示「思考中」
+- [ ] 回答框目前是纯文本渲染 Markdown 源文（`**`、`` ` `` 可见）。
+      要做得更好需要一个「只处理 code/bold/list/inline-code」的小渲染器，**禁止 dangerouslySetInnerHTML**
+
+### M4 已验证的行为（回归基线）
+
+| 行为 | 期望 |
+|---|---|
+| 没配 Key 就提问 | 回答框显示「还没配置模型 API Key」+ 自动弹出「AI 设置」；后端回 400 `AI_NOT_CONFIGURED` |
+| 填入 Key 保存 | 接口只回 `sk-****xxxx` 掩码；库里 `api_key_cipher` 是密文，`psql` 里看不到明文 |
+| 只改模型名不填 Key | 原 Key 保留，`hasKey` 仍为 true |
+| 点「测试连接」 | 成功显示往返毫秒数；Key 错/余额不足显示可照做的中文原因，不是 500 |
+| base-url 填内网 | 400 `BASE_URL_FORBIDDEN`，且不落库 |
+| 提问 → 流式回答 | 回答框逐字出现；结束后 `answers` 表 status=done 且内容与框内一致 |
+| 回答中切画布 | 上游请求被 abort，不再产生增量（不白花 token） |
+| 删掉正在生成的问答 | 先断流再删，不留孤儿答案 |
+| 回答失败后点 ↻ | 用当前代码重新生成一条新 `answers` 记录，旧记录保留 |
+| 同一问答重复提交 | 按 `clientId` 幂等，只有一条 `questions` 记录 |
 
 ### M3 已验证的行为（回归基线）
 

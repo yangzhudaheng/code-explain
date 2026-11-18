@@ -1664,3 +1664,114 @@ button {
   font-size: 11.5px;
   color: #a3aec2;
 }
+
+/* ---------- AI 设置弹窗 ---------- */
+
+.ai-modal {
+  width: 560px;
+}
+
+.ai-warn {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff6e8;
+  border: 1px solid #f6dcb0;
+  color: #8a5a12;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ai-warn code {
+  font-family: var(--mono);
+  background: #fdf0d8;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.ai-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 2px 0 10px;
+  font-size: 10.5px;
+}
+
+.ai-state {
+  color: var(--muted);
+}
+
+.ai-state.on {
+  color: #1d7a4d;
+}
+
+.ai-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.ai-link:hover {
+  text-decoration: underline;
+}
+
+.ai-msg {
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.ai-msg.ok {
+  background: #eaf7f0;
+  color: #1d7a4d;
+}
+
+.ai-msg.err {
+  background: #fdeaea;
+  color: #b42318;
+}
+
+.ai-msg.info {
+  background: var(--accent-soft);
+  color: #27529c;
+}
+
+.answer-empty {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* ---------- 回答正文里的极简 Markdown ---------- */
+
+.md-p {
+  margin: 0 0 8px;
+}
+
+.md-p:last-child {
+  margin-bottom: 0;
+}
+
+.md-code {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f6f8fc;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.md-inline-code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2f9;
+  color: #27529c;
+}
