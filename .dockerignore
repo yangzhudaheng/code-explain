@@ -8,5 +8,8 @@
 *.log
 .env
 **/.env
-README.md
-AGENT.md
+*.md
+# 本地打好的部署包（26MB+），只会上传慢，镜像里用不到
+dist-deploy
+# 部署脚本与文档，不进镜像
+deploy

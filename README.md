@@ -134,32 +134,52 @@ mvn test
 
 ## 部署
 
-> **当前推荐路径：国内轻量服务器**，见 [`deploy/DEPLOY-服务器.md`](deploy/DEPLOY-服务器.md)。
-> 原因：Render / Koyeb / Fly / Railway 的免费实例都要求绑信用卡验证身份（$1~$29 预授权），
-> 没有双币卡就走不通；轻量服务器支付宝付款、`IP:8080` 直接访问、不需要备案、不休眠。
-> 打包命令 `bash deploy/build-package.sh`，产物是带前端的 jar，服务器只装 JRE。
->
-> 下面保留 Render 的完整流程，作为「以后有卡了」或「想换平台」的备选。
+有两条路，按「谁能打开你的网址」来选：
 
-### 为什么最后没用 Vercel
+| 路径 | 谁能访问 | 成本 | 休眠 | 做法 |
+|---|---|---|---|---|
+| **A. Vercel 单容器** | 只有能访问 `*.vercel.app` 的人（国内需代理） | 0 | 闲置 5 分钟缩容，唤醒约 8~15s | 见下 |
+| **B. 国内轻量服务器** | 国内任何人直连 | 约几十元/年 | 不休眠 | 见 [`deploy/DEPLOY-服务器.md`](deploy/DEPLOY-服务器.md) |
 
-`*.vercel.app` 这个域名在国内被 DNS 污染（解析到 Facebook 的 `31.13.x.x` 网段），
+### A. Vercel 单容器（零成本）
+
+关键只有一条：**Root Directory 必须是仓库根，用根目录的 `Dockerfile.vercel`**。
+设成 `api` 会得到"只有接口、没有页面"的部署（访问 `/` 返回 `NOT_FOUND`），这是最常见的错配。
+
+1. Vercel → 项目 → `Settings` → `Build & Deployment` → **Root Directory 清空**（或填 `./`）
+2. Framework Preset 选 `Other`
+3. `Deployments` → 最新一条右侧 `Redeploy`（勾选使用最新代码）
+4. 构建约 6~10 分钟（要装 npm + Maven 依赖），完成后访问域名应直接看到登录页
+
+环境变量与下表一致，但注意 `COOKIE_SECURE=true`（Vercel 是 https）、
+`DB_POOL_SIZE=2`（容器实例可能并发多个）、`CAPTCHA_DEBUG=false`。
+
+> **免费额度的边界**：单次请求上限 300s、内存 2GB / 1 核、请求体 4.5MB、
+> 每月 4 小时 CPU。AI 回答几十秒、画布快照自限 2MB，都够；
+> 但「缩容到零再唤醒」会有 8~15 秒等待，这是 serverless 的固有代价。
+
+### B. 国内轻量服务器
+
+见 [`deploy/DEPLOY-服务器.md`](deploy/DEPLOY-服务器.md)。打包命令 `bash deploy/build-package.sh`，
+产物是带前端的 jar，服务器只装 JRE、不做构建。
+
+### 为什么不再推荐拆成两个 Vercel 项目
+
+`*.vercel.app` 在国内被 DNS 污染（解析到 Facebook 的 `31.13.x.x` 网段），
 浏览器直接报 `ERR_NAME_NOT_RESOLVED`——**不是站点挂了，是域名本身打不开**。
-
-2026-11 实测：Vercel 的容器构建正常、服务正常启动、接口正常返回，但国内用户进不去。
+2026-11 实测：容器构建正常、服务正常启动、接口正常返回，但国内用户进不去。
 要在国内用 Vercel，唯一办法是绑一个没被污染的自定义域名。
 
-`*.onrender.com` 在同等条件下解析正常、直连可达，所以后端和前端一起搬到 Render。
+拆成两个项目还会引入跨域：Cookie 要 `SameSite=None`+`Secure`、后端要加 CORS，
+两处都可能出错。单容器同源没有这些问题，所以现在一律单容器。
 
 ### 单容器：一个网址装下前端和后端
 
-根目录的 `Dockerfile` 是三阶段构建：
+根目录的 `Dockerfile` 与 `Dockerfile.vercel` 步骤相同，都是三阶段：
 
 1. Node 编译 `web/` → 静态文件
 2. Maven 编译 `api/`，并把上一步的产物拷进 `src/main/resources/static/`
 3. 运行镜像里只有一个 JAR
-
-部署出来是**一个服务、一个域名**：
 
 | 路径 | 来源 |
 |---|---|
@@ -167,47 +187,32 @@ mvn test
 | `/api/*` | Spring Boot 接口 |
 
 前后端天然同源，**不需要 CORS，Cookie 不用改 `SameSite`/`Domain`**。
-同一个镜像也能直接跑在 Koyeb / Fly.io / 自己的服务器上。
 
-> 拆成两个服务会变成两个域名 → 跨域 → Cookie 要 `SameSite=None` + HTTPS、后端要加 CORS，
-> 两处都容易出错。合成一个容器是这里最省事的选择。
+> 顺序不能反：先 `COPY api/src`，**再**把 `web/dist` 覆盖进 `static/`，
+> 否则 Maven 打包时静态文件还不存在，访问 `/` 直接 404（踩过）。
 
-### 1. 推代码
+## 备选：Render（需绑信用卡）
 
-```bash
-git remote add origin https://github.com/yangzhudaheng/code-explain.git
-git push -u origin main
-```
+免费实例要求绑卡做身份验证（$1 预授权），没有双币卡就走不通，故降为备选。
+好处是 `*.onrender.com` 在国内解析正常、直连可达。
 
-### 2. 在 Render 建服务
+1. render.com → `New` → `Blueprint` → 选 `code-explain` 仓库，自动读 `render.yaml`
+2. 填 7 个变量：`DATABASE_URL`、`JWT_SECRET`、`APP_ENC_KEY`、`SMTP_USER`、`SMTP_PASS`、
+   `SMTP_FROM`、`APP_BASE_URL`
+3. `Apply`，等构建（首次约 5~10 分钟）
 
-**Blueprint 方式（推荐，配置都在 `render.yaml` 里）**
+> **免费实例的代价**：15 分钟无访问会休眠，下次打开要等 30~60 秒冷启动（JVM 重新拉起）。
 
-1. render.com → `New` → `Blueprint` → 选 `code-explain` 仓库
-2. Render 自动读取 `render.yaml`，提示你填 7 个变量：
-   `DATABASE_URL`、`JWT_SECRET`、`APP_ENC_KEY`、`SMTP_USER`、`SMTP_PASS`、`SMTP_FROM`、`APP_BASE_URL`
-3. 点 `Apply`，等构建（首次约 5~10 分钟）
-
-**手动方式**
-
-1. `New` → `Web Service` → 选仓库
-2. Runtime 选 `Docker`，Dockerfile Path 填 `./Dockerfile`
-3. Region 选 `Singapore`（离 Neon 最近），Plan 选 `Free`
-4. Health Check Path 填 `/api/ping`
-5. 环境变量照 `render.yaml` 逐个填
-
-### 3. 部署后验证
+## 部署后验证（任何平台通用）
 
 | 地址 | 期望 |
 |---|---|
-| `/api/ping` | `{"ok":true,...}` |
-| `/api/db/ping` | PostgreSQL 版本 + 迁移版本 + 表清单 |
-| `/` | 画布页面 |
+| `/` | 登录页（HTML，不是 JSON） |
+| `/api/ping` | `{"app":"code-explain-api","java":"21.0.13","ok":true,...}` |
+| `/api/db/ping` | PostgreSQL 版本 + 迁移版本 + 7 张表清单 |
+| `/api/canvases` | 未登录时 `401 {"code":"UNAUTHORIZED"}` |
 
-拿到域名后，把 Render 环境变量里的 `APP_BASE_URL` 改成 `https://<你的服务名>.onrender.com`。
-
-> **免费实例的代价**：15 分钟无访问会休眠，下次打开要等 30~60 秒冷启动（JVM 重新拉起）。
-> 想避免只能付费（约 $7/月）或上自己的服务器。
+拿到域名后，把 `APP_BASE_URL` 改成真实地址（只影响验证码邮件里的链接，不影响启动）。
 
 ## 环境变量（后端，后续里程碑使用）
 

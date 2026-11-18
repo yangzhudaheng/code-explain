@@ -309,4 +309,21 @@ class AuthFlowTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.field").exists());
     }
+
+    @Test
+    @DisplayName("方法用错返回 405、未登录访问未知路径返回 401，都不能兜底成 500")
+    void methodAndPathMismatchAreNot500() throws Exception {
+        // captcha 是 GET，写成 POST 时 Spring 抛 HttpRequestMethodNotSupportedException。
+        // 它和 NoResourceFoundException 一样是 RuntimeException，曾被打成 500，
+        // 线上排查时看到「服务器开小差」根本猜不到是方法写错。
+        mvc.perform(post("/api/auth/captcha"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
+
+        // 注意这里断言的是 401 而不是 404：/api/** 全部先过鉴权拦截器，
+        // 未登录时连「这个接口存不存在」都不该透露。404 的语义留给已登录用户。
+        mvc.perform(get("/api/no-such-endpoint"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
 }

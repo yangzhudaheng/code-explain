@@ -28,6 +28,9 @@ public enum ErrorCode {
     NOT_FOUND(HttpStatus.NOT_FOUND, "接口不存在"),
     CANVAS_NOT_FOUND(HttpStatus.NOT_FOUND, "画布不存在或已被删除"),
 
+    // 405 —— 路径存在但 HTTP 方法不对
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "请求方法不支持"),
+
     // 409 —— 状态冲突
     EMAIL_TAKEN(HttpStatus.CONFLICT, "该邮箱已注册"),
     CANVAS_VERSION_CONFLICT(HttpStatus.CONFLICT, "画布已在别处被修改，请重新加载后再保存"),

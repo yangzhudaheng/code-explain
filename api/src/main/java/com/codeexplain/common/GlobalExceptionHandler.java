@@ -11,6 +11,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -57,6 +58,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleNotFound(Exception ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of(ErrorCode.NOT_FOUND));
+    }
+
+    /**
+     * 路径存在但方法不对（如把 {@code GET /api/auth/captcha} 写成 POST）返回 405。
+     *
+     * <p>与上一个同理：它也是 RuntimeException，落进 {@code Exception} 兜底会变成 500。
+     * 实测踩过：用 POST 打 captcha 得到「服务器开小差了」，看不出真实原因是方法用错。
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiError> handleMethodNotAllowed(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiError.of(ErrorCode.METHOD_NOT_ALLOWED));
     }
 
     @ExceptionHandler(Exception.class)

@@ -59,10 +59,13 @@
     而且用户要记两个网址。根目录 `Dockerfile` 三阶段构建（Node 编译前端 → 拷进
     `api/src/main/resources/static/` → Maven 打包），一个域名同时服务 `/` 和 `/api/*`。
     这条不是审美偏好：`/api/*` 走相对路径 + 同源 Cookie 是当前鉴权能成立的前提。
-16. **`*.vercel.app` 域名在国内不可用，别再往 Vercel 上部署线上环境。**
+16. **`*.vercel.app` 域名在国内直连不可用；要用 Vercel 就必须接受"只有挂梯子的人能打开"。**
     2026-11 实测：域名解析被污染到 `31.13.x.x`（Facebook 网段），浏览器报
-    `ERR_NAME_NOT_RESOLVED`；容器本身能正常构建和启动，纯粹是域名打不开。
-    将来若要回到 Vercel，前提是绑一个没被污染的自定义域名。
+    `ERR_NAME_NOT_RESOLVED`；容器本身构建、启动、连库全部正常，纯粹是域名打不开。
+    挂梯子后完全可用，且 Hobby 免费不需要绑卡 —— 这是它相对 Render/Koyeb 的唯一优势。
+    走这条路时**必须用根目录的 `Dockerfile.vercel`（单容器全栈），且 Vercel 项目的
+    Root Directory 要设为仓库根**；设成 `api` 会退化成"只有接口、没有页面"。
+    要让不挂梯子的人也能打开，只能换国内服务器或绑自定义域名。
 17. **免费海外容器平台都要绑卡，没有卡就别在这条路上耗。**
     2026-11 实测：Render、Koyeb、Fly.io、Railway 均要求绑卡做身份验证（$1~$29 预授权）；
     Northflank 定价页写 "No card needed"，但其帮助文档写明

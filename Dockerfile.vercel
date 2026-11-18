@@ -1,0 +1,55 @@
+# ============================================================
+# Vercel 容器入口（文件名必须是 Dockerfile.vercel，且放在 Root Directory）
+#
+# 与根目录 Dockerfile 的关系：构建步骤完全一致（三阶段），只有两点不同
+#   1. JVM 参数按 Vercel Hobby 的 2GB / 1 核重新给，不再按 512MB 死抠
+#   2. 注释说明 Vercel 的注入约定，避免以后误改
+#
+# 为什么把前端打进 jar 而不是拆两个项目：
+#   拆开就是两个域名，浏览器视角变跨域 —— Cookie 要 SameSite=None、
+#   后端要加 CORS，两处都容易出错。合成一个容器后天然同源。
+# ============================================================
+
+# ---------- 阶段 1：构建前端 ----------
+FROM node:20-alpine AS web
+WORKDIR /web
+# 先只拷 lock 文件：依赖没变时这层走缓存，改业务代码不用重装依赖
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+# ---------- 阶段 2：构建后端，并把前端产物塞进 static ----------
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY api/pom.xml .
+RUN mvn -q -B -DskipTests dependency:go-offline
+COPY api/src ./src
+# 顺序不能反：先拷后端源码，再把前端产物覆盖进 static，
+# 否则 mvn 打不进静态文件，访问 / 会 404（已经踩过一次）
+COPY --from=web /web/dist/ ./src/main/resources/static/
+RUN mvn -q -B -DskipTests package
+
+# ---------- 阶段 3：运行 ----------
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+# 图形验证码用 Java2D 画字，Alpine 默认不带任何字体，
+# 缺字体会抛 "Fontconfig head is null" 或画出空白图 —— 必须装字体
+RUN apk add --no-cache fontconfig ttf-dejavu \
+    && (fc-cache -f > /dev/null 2>&1 || true)
+
+COPY --from=build /src/target/*.jar app.jar
+
+# 堆给固定 640M 而不是 MaxRAMPercentage：
+# Vercel 容器不一定把 cgroup 内存限制透给 JVM，百分比可能按宿主内存算出巨大堆，
+# 然后被平台 OOM kill。固定值最稳。
+# SerialGC + TieredStopAtLevel=1 是为了缩短冷启动 —— Vercel 闲置 5 分钟缩容到零，
+# 每次唤醒都要重新拉起 JVM，启动快比峰值吞吐重要。
+ENV JAVA_OPTS="-Xmx640m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Dspring.main.lazy-initialization=true" \
+    JAVA_TOOL_OPTIONS="-Djava.awt.headless=true"
+
+EXPOSE 8080
+
+# Vercel 会注入 PORT（实测为 80），没注入时回落到 8080
+CMD ["sh", "-c", "java $JAVA_OPTS -jar app.jar --server.port=${PORT:-8080}"]
