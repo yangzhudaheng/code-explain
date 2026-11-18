@@ -95,40 +95,71 @@ export function chooseSide(input: {
  *   右侧列 = 代码块右边界 + COL_OFFSET，左侧列 = 代码块左边界 - COL_OFFSET - BOX_WIDTH
  * - 组内按锚点 y 排序后依次下推，间距 16
  * - pinned 的框完全不参与重排（用户的意图优先）
+ *
+ * <p>**没被移动的框必须返回同一个对象引用**。拖动时每帧都会调一次 arrange，
+ * 如果照旧无脑 `map(q => ({...q}))`，150 个回答框每帧全部换新身份，
+ * React.memo 全部失效，等同于每帧重渲染整张画布 —— 这是拖动掉帧的主因。
+ * 位置变化的判定用 0.5px 容差：亚像素抖动不值得让一整个框重渲染。
  */
 export function arrange(questions: Question[], blocks: CodeBlockModel[]): Question[] {
-  const next = questions.map((q) => ({ ...q }));
   const groups = new Map<string, Question[]>();
-  for (const q of next) {
+  for (const q of questions) {
     const key = `${q.blockId}|${q.side}`;
     const list = groups.get(key) ?? [];
     list.push(q);
     groups.set(key, list);
   }
 
+  const target = new Map<string, { x: number; y: number }>();
   for (const [key, list] of groups) {
     const [blockId, side] = key.split('|') as [string, Side];
     const block = blocks.find((b) => b.id === blockId);
     const colX = block ? columnX(block, side) : side === 'right' ? COL_OFFSET : -BOX_WIDTH - COL_OFFSET;
 
+    // list 是本函数内新建的数组，原地排序不会影响调用方传进来的 questions
     list.sort((a, b) => a.anchorPoint.y - b.anchorPoint.y);
+
+    // 锁定的框是固定障碍。以前只让它们「推进游标」，一旦用户把框拖到更靠前的框上面，
+    // 那个框已经排完不会再动，两者就叠在一起了。先把锁定框的纵向区间收出来，
+    // 排未锁定的框时逐个跳过，谁也不会被压住。
+    const obstacles = list
+      .filter((q) => q.pinned)
+      .map((q) => ({ top: q.boxY, bottom: q.boxY + (q.boxH || DEFAULT_BOX_H) }));
+
     let cursor = Number.NEGATIVE_INFINITY;
 
     for (const q of list) {
-      if (q.pinned) {
-        cursor = Math.max(cursor, q.boxY + (q.boxH || DEFAULT_BOX_H) + BOX_GAP);
-        continue;
-      }
+      if (q.pinned) continue;
+      const h = q.boxH || DEFAULT_BOX_H;
       const desired = q.anchorPoint.y - 24;
-      const y =
-        cursor === Number.NEGATIVE_INFINITY ? desired : Math.max(desired, cursor);
-      q.boxX = colX;
-      q.boxY = y;
-      cursor = y + (q.boxH || DEFAULT_BOX_H) + BOX_GAP;
+      let y = cursor === Number.NEGATIVE_INFINITY ? desired : Math.max(desired, cursor);
+
+      // 下推到不再压住任何锁定框为止（障碍是固定的，循环必然收敛）
+      for (let moved = true; moved; ) {
+        moved = false;
+        for (const o of obstacles) {
+          if (y < o.bottom + BOX_GAP && y + h > o.top) {
+            y = o.bottom + BOX_GAP;
+            moved = true;
+          }
+        }
+      }
+
+      target.set(q.id, { x: colX, y });
+      cursor = y + h + BOX_GAP;
     }
   }
 
-  return next;
+  let changed = false;
+  const next = questions.map((q) => {
+    const t = target.get(q.id);
+    if (!t) return q;
+    if (Math.abs(q.boxX - t.x) < 0.5 && Math.abs(q.boxY - t.y) < 0.5) return q;
+    changed = true;
+    return { ...q, boxX: t.x, boxY: t.y };
+  });
+
+  return changed ? next : questions;
 }
 
 /** 三点贝塞尔上的取点，用于给问题标签找位置 */

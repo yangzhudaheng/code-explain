@@ -1815,3 +1815,16 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------- 交互期降级 ---------- */
+
+/*
+ * 拖拽/平移/缩放期间关掉卡片阴影。
+ * 节点多的时候（几十个代码块 + 上百个回答框），带模糊的 box-shadow 在每次
+ * transform 变化时都可能触发重栅格化，是纯装饰里最贵的一笔；停手后立刻恢复，
+ * 用户几乎察觉不到中间少了一层阴影。
+ */
+.world.is-busy .block,
+.world.is-busy .answer {
+  box-shadow: none;
+}

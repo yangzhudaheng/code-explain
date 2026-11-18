@@ -1,13 +1,16 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CodeBlockModel, Question, Rect4 } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { measureAnchor } from './anchors';
 import { useFlat } from './flat';
+import { beginInteraction, createFrameCoalescer, endInteraction } from './interaction';
 import { tokenize } from './highlight';
 
 interface Props {
   block: CodeBlockModel;
   questions: Question[];
+  /** 视口裁剪：完全在视野外的代码块不挂载 */
+  visible: boolean;
 }
 
 const LANGS = [
@@ -24,12 +27,15 @@ function normalizeCode(src: string) {
   return src.replace(/\r\n?/g, '\n').replace(/^\n+/, '').replace(/\s+$/, '');
 }
 
-export function CodeBlock({ block, questions }: Props) {
+function CodeBlockImpl({ block, questions, visible }: Props) {
   const moveBlock = useCanvas((s) => s.moveBlock);
   const updateBlock = useCanvas((s) => s.updateBlock);
   const removeBlock = useCanvas((s) => s.removeBlock);
   const refreshAnchors = useCanvas((s) => s.refreshAnchors);
-  const hoverQid = useCanvas((s) => s.hoverQid);
+  // 只关心「悬停的框是不是本块里的」，别的块的 hover 不该让这里重渲染
+  const hoverQid = useCanvas((s) =>
+    s.hoverQid && questions.some((q) => q.id === s.hoverQid) ? s.hoverQid : null,
+  );
   const zoom = useCanvas((s) => s.docs[s.activeId].viewport.zoom);
   const flat = useFlat();
   /** 画布缩小时把边框加粗到 1/zoom，保证视觉上始终是 1px；导出视图恒为 1 */
@@ -55,19 +61,25 @@ export function CodeBlock({ block, questions }: Props) {
     let ly = e.clientY;
     el.setPointerCapture(e.pointerId);
     el.classList.add('dragging');
+    beginInteraction();
 
+    const drag = createFrameCoalescer((dx, dy) => moveBlock(block.id, dx / z, dy / z));
     const move = (ev: PointerEvent) => {
-      moveBlock(block.id, (ev.clientX - lx) / z, (ev.clientY - ly) / z);
+      drag.add(ev.clientX - lx, ev.clientY - ly);
       lx = ev.clientX;
       ly = ev.clientY;
     };
     const up = () => {
+      drag.flush();
       el.classList.remove('dragging');
+      endInteraction();
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
   };
 
   const beginEdit = () => {
@@ -134,7 +146,7 @@ export function CodeBlock({ block, questions }: Props) {
 
     if (Object.keys(patch).length === 0) return;
     refreshAnchors(block.id, patch);
-  }, [block.id, block.content, block.language, editing, flat, sig, zoom, refreshAnchors]);
+  }, [block.id, block.content, block.language, editing, flat, sig, zoom, refreshAnchors, visible]);
 
   const onTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
@@ -162,6 +174,9 @@ export function CodeBlock({ block, questions }: Props) {
   };
 
   const editHeight = Math.min(520, Math.max(120, draftLines.length * 20 + 24));
+
+  // 视口外的块不挂载：省下的是语法着色后上千个 <span> 的布局与栅格化
+  if (!visible) return null;
 
   return (
     <div
@@ -323,3 +338,15 @@ export function CodeBlock({ block, questions }: Props) {
     </div>
   );
 }
+
+/**
+ * 拖动/平移时 Canvas 每帧都会整棵重渲染，块自身没变化就不该跟着重画。
+ * questions 用「逐个引用比较」而不是数组引用：Canvas 每次渲染都会塞一个新数组进来，
+ * 但 arrange 保证没被移动的问答对象引用不变，所以逐项比较能真正跳过无关的块。
+ */
+export const CodeBlock = memo(CodeBlockImpl, (a, b) => {
+  if (a.block !== b.block || a.visible !== b.visible) return false;
+  if (a.questions === b.questions) return true;
+  if (a.questions.length !== b.questions.length) return false;
+  return a.questions.every((q, i) => q === b.questions[i]);
+});

@@ -52,10 +52,12 @@ export function ExportStage({ doc, origin, width, height }: Props) {
             key={block.id}
             block={block}
             questions={doc.questions.filter((q) => q.blockId === block.id)}
+            // 导出视图渲染的是整张画布，不做视口裁剪
+            visible
           />
         ))}
         {doc.questions.map((q) => (
-          <AnswerBox key={q.id} q={q} />
+          <AnswerBox key={q.id} q={q} visible />
         ))}
       </div>
     </div>

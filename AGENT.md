@@ -1,7 +1,7 @@
 # AGENT.md — code-explain 项目开发规范
 
 > 本文件是项目的**唯一权威约束文档**。任何人（包括 AI Agent）接手本项目，先读本文件，再动代码。
-> 状态：`M0~M6 已完成（导出 PNG 已落地；性能虚拟化未做），线上跑通注册→画布→AI 流式问答→导出。`
+> 状态：`M0~M6 全部完成`，线上跑通注册 → 画布 → AI 流式问答 → 导出 PNG，200 节点拖动 6.1ms/帧。
 > 最后更新：2026-11-18
 
 ---
@@ -103,6 +103,21 @@
 24. **凡是「渲染时顺手改状态」的副作用，都要能被导出模式关掉。**
     这不是导出专有的洁癖：同一个组件渲染两次就会有两个 `ResizeObserver` 往同一份状态里写，
     谁的尺寸后到就以谁为准，屏幕上会莫名跳一下。
+25. **视口裁剪的前提是「节点的状态都放在快照里，没有只活在 DOM 里的东西」。**
+    现在的回答框高度 `boxH`、锚点几何 `anchorPoint/anchorRects` 都在模型里，
+    所以 `/cull.ts` 可以随时卸载它们、重新挂载时由 `CodeBlock` 的布局副作用重测。
+    **以后加新节点类型时，如果它有「必须在 DOM 里活着才有意义」的状态**（例如正在输入的
+    未提交草稿），要么把状态提到 store，要么把它加进白名单不参与裁剪 —— 否则滚出视野再回来，
+    用户的输入就没了。
+26. **每帧都会被调用的布局/几何函数，必须返回稳定引用。**
+    `arrange()` 做得对：位置没变的框返回同一个对象，`React.memo` 才有意义。
+    反面教材是上一版 `questions.map(q => ({...q}))` —— 150 个框每帧全部换新身份，
+    等于关掉了所有 memo，拖动直接掉到 40fps。同理，Canvas 传给子组件的空数组要用模块常量，
+    不能写 `?? []`。
+27. **导出图的内容边界只能从导出视图里量，不能从屏幕上量。**
+    视口裁剪之后，视野外的代码块根本没挂载，`document.querySelectorAll('[data-block-id]')`
+    会漏掉它们并退回估算高度，表现是「导出图底部被切掉一截」。所以 `renderCanvasPng()`
+    先按 1×1 渲染一遍导出视图专门量高度，再用正确尺寸渲染第二遍。
 
 ---
 
@@ -231,8 +246,10 @@ code-explain/
 │       │   ├── flat.ts         # 导出模式上下文（非 null = 离屏导出视图）
 │       │   ├── ExportStage.tsx # 导出用的 1:1 无交互视图
 │       │   ├── exportPng.ts    # 量高度 → 算外接框 → 栅格化 → 下载
+│       │   ├── cull.ts         # 视口裁剪：屏幕可视区 → 世界坐标矩形 → 是否挂载
+│       │   ├── interaction.ts  # 交互态计数（交互期关阴影）+ pointermove 帧合并
 │       │   ├── workspace.ts    # 首屏加载画布、首次示例问答注入
-│       │   └── layout.ts       # 避让与自动整理
+│       │   └── layout.ts       # 避让与自动整理、缩放换算
 │       ├── ai/                 # M4：提问→落库→流式回答的编排（ask.ts）
 │       ├── ui/                 # 登录页、侧栏、工具栏、AI 设置弹窗
 │       ├── api/                # client.ts（统一 fetch/HttpError）+ auth.ts + canvas.ts + ai.ts + qa.ts（SSE 解析）
@@ -549,7 +566,7 @@ git push -u origin main
 | **M3 画布持久化** ✅ | 多画布 CRUD、jsonb 快照、`version` 乐观锁、前端防抖自动保存 | 刷新不丢内容；两标签页同改触发 409 并有「重新加载 / 以我为准」两个出口 |
 | **M4 AI 问答** ✅ | Provider 抽象、SSRF 校验、加密存储、SSE | DeepSeek 单预设 + 自定义 base_url；Key 掩码回显；内网地址被拒；流式增量落库；`AI_NOT_CONFIGURED` 自动弹出设置 |
 | **M5 上线** ✅ | GitHub push → Vercel **单容器**（非双项目） | 线上 <https://code-explain-nine.vercel.app> 走通注册→登录→建画布→自动保存 |
-| **M6 打磨** | 代码高亮、导出 PNG ✅、性能虚拟化 | 导出：内容完整、四边留白一致、2× 分辨率；性能：200 个节点下拖动不掉帧（**未做**，仍全量渲染） |
+| **M6 打磨** | 代码高亮、导出 PNG ✅、性能与视口裁剪 ✅ | 导出：内容完整、四边留白一致、2× 分辨率 ✅；性能：200 节点下拖动 6.1ms/帧（60fps 预算 16.7ms）✅ |
 
 **顺序纪律**：M0.5 不过，不写业务代码。M0 手感没被确认，不做 M1。
 
@@ -590,15 +607,38 @@ git push -u origin main
 - [x] **M4 本体**：`ai/`（SecretBox、BaseUrlGuard、ChatClient、AiSettings*）+ `qa/`
       （QuestionRepository、AnswerRepository、ExplainPrompt、QaService、QaController）+
       前端 `ui/AiSettings.tsx`、`ai/ask.ts`、`api/{ai,qa}.ts`；新增 33 个测试，后端共 85 个全过
-- [ ] 待确认（有真实 Key 才能验）：DeepSeek 的 `stream_options.include_usage` 是否回 token 用量；
-      `deepseek-reasoner` 的 `reasoning_content` 目前不展示（只取 `content`），要不要显示「思考中」
-- [ ] 回答框目前是纯文本渲染 Markdown 源文（`**`、`` ` `` 可见）。
-      要做得更好需要一个「只处理 code/bold/list/inline-code」的小渲染器，**禁止 dangerouslySetInnerHTML**
+- [x] **线上真实提问回归**（用户 2026-11-18 实测确认）：回答逐字流式（Vercel 没有缓冲 SSE）、
+      内容针对选中的那几行（行号传对了）、刷新后回答还在（`answers` 落库 + 快照回填正常）、
+      `done` 事件里 token 用量非 0（`stream_options.include_usage` 被 DeepSeek 接受）
+- [ ] `deepseek-reasoner` 的 `reasoning_content` 目前不展示（只取 `content`），
+      要做「思考过程」需要在回答框里加一条默认折叠的通道
+- [x] 回答框的 Markdown：`canvas/MarkdownLite.tsx` 自己解析代码块/行内代码/加粗/列表，
+      不用 `dangerouslySetInnerHTML`
+- [x] **M6 性能与视口裁剪**：`canvas/cull.ts`（视口裁剪，420px slack）、
+      `layout.ts` 的 `arrange` 改为引用稳定、`CodeBlock`/`AnswerBox`/`ConnectorLayer` 加 memo 与窄订阅、
+      `canvas/interaction.ts`（交互期关阴影 + pointermove 帧合并）。
+      实测 200 节点：平移 22.5ms → 6.1ms/帧，拖框 24.1ms → 6.1ms/帧；
+      缩到 30%（125 节点同屏）77.5fps。顺带修掉「锁定框被拖到上方时与相邻框重叠」的老 bug
 - [x] **M6 导出 PNG**：`canvas/flat.ts`（导出模式上下文）+ `canvas/ExportStage.tsx`（离屏视图）+
-      `canvas/exportPng.ts`（量高度 → 算内容外接框 → 离屏渲染 → `html-to-image` 栅格化 → 下载），
+      `canvas/exportPng.ts`（两遍渲染：先量高度 → 算内容外接框 → 再按最终尺寸渲染 → `html-to-image` 栅格化 → 下载），
       工具栏加「导出 PNG」按钮。实测：1560×464 逻辑尺寸、2× 输出 3120×928，四边留白 49~53px，
-      高亮带间距 80px = 2 行 × 20px，与屏幕锚点完全一致
-- [ ] 性能虚拟化：视口外的回答框仍全量渲染，节点多了拖动会重排全部 DOM（M6 未做部分）
+      高亮带间距 80px = 2 行 × 20px，与屏幕锚点完全一致；离屏代码块（y=3000）也有用例覆盖
+
+### M6 已验证的行为（回归基线）
+
+无头 Chromium 上跑过（脚本跑完即删），200 节点场景；这 9 项每次改画布渲染都要重跑：
+
+| 行为 | 期望 |
+|---|---|
+| 视野外的代码块/回答框 | 不挂载（`document.querySelectorAll` 查不到），平移进来才挂载 |
+| 平移出去再平移回来 | 锚点高亮位置**一个像素都不差**（重新挂载时 `CodeBlock` 会重测） |
+| 拖回答框 | 位移跟随指针、自动 `pinned`、松手后 `.dragging` 消失 |
+| 把框拖到同列另一个框上方 | 被压的那个自动下推，两者纵向不重叠 |
+| 正在流式输出的框 | 即使滚出视野也不裁剪 |
+| 拖动/平移/滚轮缩放期间 | `.world` 带 `is-busy`，卡片阴影关闭；停手 180ms 内恢复 |
+| 200 节点平移 | ≤ 6.5ms/帧（60fps 预算 16.7ms） |
+| 200 节点拖框 | ≤ 7.5ms/帧 |
+| 画布上有离屏代码块时导出 | 导出图完整覆盖它（高度从导出视图量，不退回估算） |
 
 ### M4 已验证的行为（回归基线）
 

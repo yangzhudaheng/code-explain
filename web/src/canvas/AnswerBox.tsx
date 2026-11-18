@@ -1,11 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import type { Question } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { askAi, cancelAsk } from '../ai/ask';
 import { useFlat } from './flat';
+import { beginInteraction, createFrameCoalescer, endInteraction } from './interaction';
 import { MarkdownLite } from './MarkdownLite';
 
-export function AnswerBox({ q }: { q: Question }) {
+function AnswerBoxImpl({ q, visible }: { q: Question; visible: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const flat = useFlat();
   const moveBox = useCanvas((s) => s.moveBox);
@@ -15,7 +16,8 @@ export function AnswerBox({ q }: { q: Question }) {
   const removeQuestion = useCanvas((s) => s.removeQuestion);
   const setSide = useCanvas((s) => s.setSide);
   const setHover = useCanvas((s) => s.setHover);
-  const hoverQid = useCanvas((s) => s.hoverQid);
+  // 只订阅「悬停的是不是自己」：否则鼠标扫过一个框，150 个框全都要重渲染
+  const hovered = useCanvas((s) => s.hoverQid === q.id);
 
   useEffect(() => {
     const el = ref.current;
@@ -28,7 +30,7 @@ export function AnswerBox({ q }: { q: Question }) {
     ro.observe(el);
     setBoxH(q.id, el.offsetHeight);
     return () => ro.disconnect();
-  }, [q.id, q.collapsed, flat, setBoxH]);
+  }, [q.id, q.collapsed, flat, setBoxH, visible]);
 
   const onHeadDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -40,22 +42,31 @@ export function AnswerBox({ q }: { q: Question }) {
     let ly = e.clientY;
     el.setPointerCapture(e.pointerId);
     el.classList.add('dragging');
+    beginInteraction();
 
+    const drag = createFrameCoalescer((dx, dy) => moveBox(q.id, dx / z, dy / z));
     const move = (ev: PointerEvent) => {
-      moveBox(q.id, (ev.clientX - lx) / z, (ev.clientY - ly) / z);
+      drag.add(ev.clientX - lx, ev.clientY - ly);
       lx = ev.clientX;
       ly = ev.clientY;
     };
     const up = () => {
+      drag.flush();
       el.classList.remove('dragging');
+      endInteraction();
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
   };
 
-  const active = !flat && hoverQid === q.id;
+  const active = !flat && hovered;
+
+  // 视口外的框不挂载：回答正文里的 Markdown 结构是画布上最贵的 DOM
+  if (!visible) return null;
 
   return (
     <div
@@ -153,3 +164,12 @@ export function AnswerBox({ q }: { q: Question }) {
     </div>
   );
 }
+
+/**
+ * q 由 store 直接给出对象引用：拖动时只有被拖的那个、以及被避让挪动的那些会换新对象，
+ * 其余框引用不变 → 跳过重渲染。视口可见性变化必须参与比较，否则裁剪不生效。
+ */
+export const AnswerBox = memo(
+  AnswerBoxImpl,
+  (a, b) => a.q === b.q && a.visible === b.visible,
+);

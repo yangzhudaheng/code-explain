@@ -1,5 +1,7 @@
+import { memo } from 'react';
 import { bezierPoint, BOX_WIDTH, connectorOpacity, DEFAULT_BOX_H } from './layout';
 import { useFlat } from './flat';
+import { useInteracting } from './interaction';
 import { useCanvas } from '../store/canvasStore';
 import type { CodeBlockModel, Question, Side } from '../model/types';
 
@@ -30,13 +32,14 @@ function geometryOf(q: Question, block: CodeBlockModel | undefined, fan: number)
   return { start, end, p1, p2, path, gapX: (start.x + end.x) / 2 };
 }
 
-export function ConnectorLayer() {
+function ConnectorLayerImpl() {
   const questions = useCanvas((s) => s.docs[s.activeId].questions);
   const blocks = useCanvas((s) => s.docs[s.activeId].blocks);
   const hoverQid = useCanvas((s) => s.hoverQid);
   const setHover = useCanvas((s) => s.setHover);
   const zoom = useCanvas((s) => s.docs[s.activeId].viewport.zoom);
   const flat = useFlat();
+  const busy = useInteracting();
 
   const counts = new Map<string, number>();
   for (const q of questions) {
@@ -92,7 +95,7 @@ export function ConnectorLayer() {
                 opacity={opacity}
                 markerEnd="url(#arrow-head)"
               />
-              {!flat && (
+              {!flat && !busy && (
                 <path
                   d={g.path}
                   className="connector-hit"
@@ -166,3 +169,10 @@ export function ConnectorLayer() {
     </>
   );
 }
+
+/**
+ * 连线层自己订阅 store，不需要从 Canvas 拿 props。
+ * 用 memo 把「父组件每帧重渲染」挡在外面：平移只改 .world 的 transform，
+ * 连线在屏幕上的位置全靠这层变换，根本不必重算 150 条贝塞尔。
+ */
+export const ConnectorLayer = memo(ConnectorLayerImpl);

@@ -22,6 +22,10 @@ const MAX_SIDE = 8000;
  * <p>为什么要先量真实 DOM 的高度：代码块没有存高度字段（由内容撑开），
  * 回答框的高度是 ResizeObserver 回写进 store 的。若用估算值算边界，
  * 最后一块或最下一个回答框会被裁掉一截。
+ *
+ * <p>为什么高度不能从屏幕上量：视口裁剪之后，视野外的代码块根本没有挂载。
+ * 所以先按 1×1 渲染一遍导出视图（尺寸不影响块自身高度），从里面量完高度、
+ * 算出内容边界，再用正确的尺寸渲染第二遍。导出是手动动作，多这一遍值得。
  */
 export async function exportCanvasPng(): Promise<void> {
   const state = useCanvas.getState();
@@ -51,37 +55,33 @@ export async function renderCanvasPng(): Promise<RenderedPng> {
   // 鼠标可能正悬在某个回答框上，导出时不该带上高亮态
   state.setHover(null);
 
-  const heights = measureBlockHeights();
-  const bounds = contentBounds(doc, heights);
-  const width = Math.ceil(bounds.maxX - bounds.minX) + PAD * 2;
-  const height = Math.ceil(bounds.maxY - bounds.minY) + PAD * 2;
-  const origin = { x: bounds.minX - PAD, y: bounds.minY - PAD };
-
   const host = document.createElement('div');
   host.className = 'export-host';
   document.body.appendChild(host);
   const root = createRoot(host);
 
   try {
-    root.render(
-      createElement(
-        FlatContext.Provider,
-        { value: { width, height } },
-        createElement(ExportStage, { doc, origin, width, height }),
-      ),
-    );
+    // 第一遍：尺寸给 1×1 就够，只是为了把每个代码块真实渲染出来量高度
+    root.render(stage(doc, { x: 0, y: 0 }, 1, 1));
+    await settle();
 
-    // 等两帧：一帧让 React 提交、一帧让浏览器完成布局与字体度量
-    await nextFrames(2);
-    if (document.fonts?.ready) await document.fonts.ready;
+    const heights = measureBlockHeights(host);
+    const bounds = contentBounds(doc, heights);
+    const width = Math.ceil(bounds.maxX - bounds.minX) + PAD * 2;
+    const height = Math.ceil(bounds.maxY - bounds.minY) + PAD * 2;
+    const origin = { x: bounds.minX - PAD, y: bounds.minY - PAD };
 
-    const stage = host.querySelector('.export-stage') as HTMLElement | null;
-    if (!stage) throw new Error('导出视图没有渲染出来');
+    // 第二遍：按最终尺寸重新渲染，这一份才是要栅格化的
+    root.render(stage(doc, origin, width, height));
+    await settle();
+
+    const stageEl = host.querySelector('.export-stage') as HTMLElement | null;
+    if (!stageEl) throw new Error('导出视图没有渲染出来');
 
     // 内容特别宽时降到 1x：宁可少一点清晰度，也不要一张空图
     const ratio = Math.max(1, Math.min(2, MAX_SIDE / Math.max(width, height)));
 
-    const dataUrl = await toPng(stage, {
+    const dataUrl = await toPng(stageEl, {
       width,
       height,
       pixelRatio: ratio,
@@ -99,10 +99,24 @@ export async function renderCanvasPng(): Promise<RenderedPng> {
   }
 }
 
-/** id → 屏幕上该代码块的实际高度（世界坐标，transform 缩放不影响 offsetHeight） */
-function measureBlockHeights(): Map<string, number> {
+function stage(doc: CanvasDoc, origin: { x: number; y: number }, width: number, height: number) {
+  return createElement(
+    FlatContext.Provider,
+    { value: { width, height } },
+    createElement(ExportStage, { doc, origin, width, height }),
+  );
+}
+
+/** 两帧（提交 + 布局）+ 字体就绪，缺一不可，否则量到的是回退字体的高度 */
+async function settle(): Promise<void> {
+  await nextFrames(2);
+  if (document.fonts?.ready) await document.fonts.ready;
+}
+
+/** id → 导出视图里该代码块的实际高度（世界坐标，transform 缩放不影响 offsetHeight） */
+function measureBlockHeights(root: HTMLElement): Map<string, number> {
   const map = new Map<string, number>();
-  document.querySelectorAll<HTMLElement>('[data-block-id]').forEach((el) => {
+  root.querySelectorAll<HTMLElement>('[data-block-id]').forEach((el) => {
     const id = el.dataset.blockId;
     if (id) map.set(id, el.offsetHeight);
   });
