@@ -496,13 +496,13 @@ git push -u origin main
 
 | 里程碑 | 内容 | 验收标准 |
 |---|---|---|
-| **M0.5 可行性冒烟**（最高优先） | 最小 Spring Boot 容器 + `Dockerfile.vercel` 推 Vercel | 公网可访问 `/actuator/health`；确认 Hobby 允许容器；记录冷启动耗时与 SSE 是否可跑满 60s |
+| **M0.5 可行性冒烟** ✅ | 最小 Spring Boot 容器 + `Dockerfile.vercel` 推 Vercel | 公网可访问 `/actuator/health`；确认 Hobby 允许容器；记录冷启动耗时与 SSE 是否可跑满 60s |
 | **M0 交互原型** | 纯前端单页，无后端，回答用假数据 | 粘贴代码成块、整块拖动、选中出加号、连线带问题标签、回答框避让、一键整理，全部可交互 |
 | **M1 后端骨架** ✅ | Spring Boot + Flyway（V1: 6 张表）+ Neon 连接串兼容 | 内嵌 PG 跑真实迁移通过；`/api/db/ping` 返回 schema 版本与表清单；无库时可用 `DB_OPTIONAL=true` 启动 |
 | **M2 注册登录** ✅ | 图形码 + 6 位邮件码 + 频控 + BCrypt + httpOnly Cookie 会话 | 真实 Neon 上完成注册/登录/刷新/登出；真实 QQ SMTP 发信成功；11 个认证用例覆盖边界 |
 | **M3 画布持久化** ✅ | 多画布 CRUD、jsonb 快照、`version` 乐观锁、前端防抖自动保存 | 刷新不丢内容；两标签页同改触发 409 并有「重新加载 / 以我为准」两个出口 |
-| **M4 AI 问答** | Provider 抽象、SSRF 校验、加密存储、SSE | 6 个预设可切换；Key 掩码回显；内网地址被拒 |
-| **M5 上线** | GitHub push → Vercel 双项目 → 域名（可选） | 换一台电脑浏览器可完整走通全流程 |
+| **M4 AI 问答** | Provider 抽象、SSRF 校验、加密存储、SSE | DeepSeek 单预设 + 自定义 base_url；Key 掩码回显；内网地址被拒 |
+| **M5 上线** ✅ | GitHub push → Vercel **单容器**（非双项目） | 线上 <https://code-explain-nine.vercel.app> 走通注册→登录→建画布→自动保存 |
 | **M6 打磨** | 代码高亮、导出 PNG、性能虚拟化 | 200 个节点下拖动不掉帧 |
 
 **顺序纪律**：M0.5 不过，不写业务代码。M0 手感没被确认，不做 M1。
@@ -526,12 +526,21 @@ git push -u origin main
 - [x] **M3 画布持久化**：`/api/canvases` 五个接口 + jsonb 快照 + `version` 乐观锁 + 软删；
       前端防抖 700ms 自动保存、保存状态条、跨标签页 409 与「重新加载 / 以我为准」；
       **后端 46 个测试全过**（新增 11 个画布用例），真实 Neon 上 API 与浏览器端到端均通过
-- [ ] M0.5 部署验证：Hobby 是否允许容器、冷启动耗时、SSE 可撑多久 ← **当前卡点（要用户操作）**
+- [x] **M0.5 部署验证 + M5 上线**：Vercel 容器（Hobby 免费、不需要绑卡）已跑通，
+      线上 <https://code-explain-nine.vercel.app>，**单容器同源**（根目录 `Dockerfile.vercel`，
+      前端打进 jar 的 `static/`）。验证记录：
+      `/` → 前端 HTML、`/api/ping` → 200、`/api/db/ping` → Neon 连通、`/api/auth/captcha` →
+      200 且 PNG 有字（Alpine 字体装对了）、`/api/canvases` 未登录 → 401、真实 QQ 邮箱注册登录成功
+- [ ] **区域优化（有体感，值得做）**：Vercel 函数默认在华盛顿、Neon 在新加坡，
+      `/api/db/ping` 实测 1601ms。项目 `Settings → Functions → Function Region` 改 `sin1`
+      后重新部署，预期降到 50ms 级
 - [ ] 用户重置 QQ SMTP 授权码（旧码已泄露）
-- [ ] 域名（M5 前决定即可，仅影响国内访问）
+- [ ] 域名（可选）：不绑域名则只有挂代理的人能打开 `*.vercel.app`
 - [ ] **M4 动手前必须先解决**：`questions.id` 是 uuid 列，而画布快照里的问答 id 是前端生成的
       `q_xxx` 文本；接 AI 落库时要加 V2 迁移（新增 `client_id text` 或把主键改 text），
       否则「快照里的问答」与「questions 表」无法关联
+- [ ] **M4 动手前必须先解决**：验证码答案与频控计数存在 JVM 内存（Caffeine），
+      Vercel 容器多实例或重启后会随机报「验证码已过期」。改成存 Neon 一张小表
 
 ### M3 已验证的行为（回归基线）
 
