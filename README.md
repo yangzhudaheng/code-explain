@@ -151,11 +151,22 @@ mvn test
 
 1. Vercel → 项目 → `Settings` → `Build & Deployment` → **Root Directory 清空**（或填 `./`）
 2. Framework Preset 选 `Other`
-3. `Deployments` → 最新一条右侧 `Redeploy`（勾选使用最新代码）
-4. 构建约 6~10 分钟（要装 npm + Maven 依赖），完成后访问域名应直接看到登录页
+3. `Settings` → `Functions` → **打开 `Fluid compute`**（见下方警示，不开必然失败）
+4. `Deployments` → 最新一条右侧 `Redeploy`（勾选使用最新代码）
+5. 构建约 6~10 分钟（要装 npm + Maven 依赖），完成后访问域名应直接看到登录页
+
+> **⚠️ 必须开 Fluid Compute**——容器函数（Dockerfile）在没有这个开关的项目上会直接报：
+> `The Vercel Function "container" cannot be deployed. Container functions require Fluid Compute to be enabled.`
+> 此时镜像其实已经构建并推送成功，**只是最后一步没被允许部署**，开开关再 `Redeploy` 即可，
+> 不用改代码、不用重新构建镜像。改 `Settings` → `Functions` → Function Region（如新加坡 `sin1`）
+> 也会触发重新部署，同样被这个开关卡住——**区域不是原因，只是刚好在那一刻重新部署了**。
 
 环境变量与下表一致，但注意 `COOKIE_SECURE=true`（Vercel 是 https）、
 `DB_POOL_SIZE=2`（容器实例可能并发多个）、`CAPTCHA_DEBUG=false`。
+
+> **Value 不能留空**：变量建好但 Value 是空串时，布尔类配置（`app.auth.cookie-secure`）
+> 在绑定阶段会拿到 `""`，Spring 转换失败会直接让容器启动失败——表现是域名 500 而不是报错日志。
+> 宁可显式写 `true` / `false`，也不要留空。改完环境变量同样要 `Redeploy` 才生效。
 
 > **免费额度的边界**：单次请求上限 300s、内存 2GB / 1 核、请求体 4.5MB、
 > 每月 4 小时 CPU。AI 回答几十秒、画布快照自限 2MB，都够；
