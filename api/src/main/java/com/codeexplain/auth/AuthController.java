@@ -44,10 +44,10 @@ public class AuthController {
         this.cookies = cookies;
     }
 
-    /** 刷新即换新图；旧 id 的答案留在缓存里自然过期，不影响新请求。 */
+    /** 刷新即换新图；旧 id 的答案留在库里自然过期，不影响新请求。 */
     @GetMapping("/captcha")
-    public CaptchaResponse captcha() {
-        var captcha = captchas.create();
+    public CaptchaResponse captcha(HttpServletRequest request) {
+        var captcha = captchas.create(ClientIp.of(request));
         return new CaptchaResponse(captcha.id(), captcha.imageBase64());
     }
 

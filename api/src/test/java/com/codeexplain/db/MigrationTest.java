@@ -63,19 +63,19 @@ class MigrationTest {
     private MockMvc mvc;
 
     @Test
-    @DisplayName("迁移建出全部表，且 schema 版本为 1")
+    @DisplayName("迁移建出全部表，且 schema 版本为 2")
     void createsAllTables() {
         List<String> tables = jdbc.queryForList(
                 "select tablename from pg_tables where schemaname = 'public'", String.class);
 
         assertThat(tables).contains(
                 "users", "email_codes", "canvases", "questions", "answers", "user_ai_settings",
-                "flyway_schema_history");
+                "captcha_sessions", "flyway_schema_history");
 
         String version = jdbc.queryForObject(
                 "select version from flyway_schema_history where success order by installed_rank desc limit 1",
                 String.class);
-        assertThat(version).isEqualTo("1");
+        assertThat(version).isEqualTo("2");
     }
 
     @Test
@@ -106,6 +106,46 @@ class MigrationTest {
         assertThat(jdbc.queryForObject(
                 "select data->'blocks'->0->>'id' from canvases where id = ?", String.class, canvasId))
                 .isEqualTo("b_1");
+    }
+
+    @Test
+    @DisplayName("同一画布内的 client_id 唯一，不同画布互不影响")
+    void clientIdUniquePerCanvas() {
+        UUID userId = jdbc.queryForObject(
+                "insert into users (email, password_hash) values (?, ?) returning id",
+                UUID.class, "client-id@example.com", "x");
+        UUID canvasA = jdbc.queryForObject(
+                "insert into canvases (user_id) values (?) returning id", UUID.class, userId);
+        UUID canvasB = jdbc.queryForObject(
+                "insert into canvases (user_id) values (?) returning id", UUID.class, userId);
+
+        jdbc.update("""
+                insert into questions (canvas_id, block_id, anchor, text, client_id)
+                values (?, 'b_1', '{}'::jsonb, 'q', 'q_lx8f2a')
+                """, canvasA);
+
+        // 同一画布重复前端 id：拒绝（否则快照里的 q_xxx 会对上两条记录）
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into questions (canvas_id, block_id, anchor, text, client_id)
+                values (?, 'b_1', '{}'::jsonb, 'q2', 'q_lx8f2a')
+                """, canvasA))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        // 另一个画布用同一个前端 id 是合法的：id 只在一个画布内唯一
+        jdbc.update("""
+                insert into questions (canvas_id, block_id, anchor, text, client_id)
+                values (?, 'b_1', '{}'::jsonb, 'q', 'q_lx8f2a')
+                """, canvasB);
+
+        // client_id 可以为空（内部写入、历史数据），且空值不互相冲突
+        jdbc.update("""
+                insert into questions (canvas_id, block_id, anchor, text)
+                values (?, 'b_1', '{}'::jsonb, '匿名1')
+                """, canvasA);
+        jdbc.update("""
+                insert into questions (canvas_id, block_id, anchor, text)
+                values (?, 'b_1', '{}'::jsonb, '匿名2')
+                """, canvasA);
     }
 
     @Test
@@ -163,9 +203,10 @@ class MigrationTest {
         mvc.perform(get("/api/db/ping"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.schemaVersion").value("1"))
+                .andExpect(jsonPath("$.schemaVersion").value("2"))
                 .andExpect(jsonPath("$.server").value(org.hamcrest.Matchers.containsString("PostgreSQL")))
                 .andExpect(jsonPath("$.tables", hasItem("questions")))
+                .andExpect(jsonPath("$.tables", hasItem("captcha_sessions")))
                 .andExpect(jsonPath("$.tables", hasItem("canvases")));
     }
 
