@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react';
 import type { Question } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { askAi, cancelAsk } from '../ai/ask';
+import { useFlat } from './flat';
 import { MarkdownLite } from './MarkdownLite';
 
 export function AnswerBox({ q }: { q: Question }) {
   const ref = useRef<HTMLDivElement>(null);
+  const flat = useFlat();
   const moveBox = useCanvas((s) => s.moveBox);
   const setBoxH = useCanvas((s) => s.setBoxH);
   const togglePin = useCanvas((s) => s.togglePin);
@@ -17,14 +19,16 @@ export function AnswerBox({ q }: { q: Question }) {
 
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    // 导出视图里的副本绝不回写 boxH：它的宽度与正常视图一致但排版环境不同，
+    // 回写会污染屏幕上的布局与连线端点
+    if (!el || flat) return;
     const ro = new ResizeObserver(() => {
       setBoxH(q.id, el.offsetHeight);
     });
     ro.observe(el);
     setBoxH(q.id, el.offsetHeight);
     return () => ro.disconnect();
-  }, [q.id, q.collapsed, setBoxH]);
+  }, [q.id, q.collapsed, flat, setBoxH]);
 
   const onHeadDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -51,7 +55,7 @@ export function AnswerBox({ q }: { q: Question }) {
     el.addEventListener('pointerup', up);
   };
 
-  const active = hoverQid === q.id;
+  const active = !flat && hoverQid === q.id;
 
   return (
     <div
@@ -59,8 +63,8 @@ export function AnswerBox({ q }: { q: Question }) {
       className={`answer ${active ? 'answer-active' : ''} ${q.collapsed ? 'is-collapsed' : ''}`}
       data-node="answer"
       style={{ left: q.boxX, top: q.boxY }}
-      onMouseEnter={() => setHover(q.id)}
-      onMouseLeave={() => setHover(null)}
+      onMouseEnter={flat ? undefined : () => setHover(q.id)}
+      onMouseLeave={flat ? undefined : () => setHover(null)}
     >
       <div className="answer-head" onPointerDown={onHeadDown}>
         <span className={`status-dot ${q.status}`} />

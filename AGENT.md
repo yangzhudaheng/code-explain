@@ -1,7 +1,7 @@
 # AGENT.md — code-explain 项目开发规范
 
 > 本文件是项目的**唯一权威约束文档**。任何人（包括 AI Agent）接手本项目，先读本文件，再动代码。
-> 状态：`M0~M5 已完成，M4（AI 问答）已落地，下一步 M6 打磨。`
+> 状态：`M0~M6 已完成（导出 PNG 已落地；性能虚拟化未做），线上跑通注册→画布→AI 流式问答→导出。`
 > 最后更新：2026-11-18
 
 ---
@@ -94,6 +94,15 @@
 22. **解密只发生在调模型的那一刻。** API Key 的明文不允许出现在日志、响应、
     异常栈、快照里；`answers` 表只记 `provider/model`，绝不记 Key。
     接口回显只有掩码（`sk-****3f8a`），这条由 `AiSettingsApiTest` 断言守着。
+23. **离屏渲染（导出）不能写回 store，也不能栅格化带视口 transform 的那份 DOM。**
+    导出走的是「同一套组件 + `FlatContext` 非 null」的第二份实例：`AnswerBox` 不登记 `boxH`、
+    `CodeBlock` 不重测锚点、hover 不生效；世界坐标用 `left/top` 偏移代替 `transform`，
+    连线层 svg 要撑成整张画布大小（屏幕上是 1×1 + `overflow:visible` 的技巧，
+    序列化进 `<foreignObject>` 时会被裁掉）。违反其中任何一条的表现都是「导出的图缺东西
+    或位置整体偏移」，而且只在导出时出现。
+24. **凡是「渲染时顺手改状态」的副作用，都要能被导出模式关掉。**
+    这不是导出专有的洁癖：同一个组件渲染两次就会有两个 `ResizeObserver` 往同一份状态里写，
+    谁的尺寸后到就以谁为准，屏幕上会莫名跳一下。
 
 ---
 
@@ -107,8 +116,9 @@
 | 画布渲染 | DOM 节点层 + SVG 连线层 + CSS `transform: translate() scale()` | 见硬约束 1 |
 | 状态 | Zustand | 轻，无 Provider 嵌套，适合画布这种高频更新 |
 | 样式 | 原生 CSS + CSS 变量 | 不引 Tailwind，避免与画布内联样式冲突 |
-| 代码高亮 | 先用 `white-space: pre` 纯文本，M6 再接 Shiki（**只着色，不改 DOM 结构**，否则锚点失效） | 高亮必须用 `<span>` 包裹且保持文本节点顺序连续 |
-| 字体 | `JetBrains Mono` 自托管 woff2 | 不引 Google Fonts，国内会被墙 |
+| 代码高亮 | 自写轻量分词器 `canvas/highlight.ts`（java/cpp/python/js/go/text），输出只切 `<span>` 不改文本 | 文本节点顺序与字符总数必须不变，否则锚点换算失效 |
+| 导出图片 | `html-to-image`（DOM → `<foreignObject>` → canvas） | 不引 Canvas 重绘方案：回答框里的 Markdown 换行、内联代码样式手写重绘成本极高 |
+| 字体 | 系统等宽栈 `ui-monospace / Menlo / Consolas`，不引 Google Fonts | 国内 Google Fonts 不稳；导出的字面也因此与屏幕一致 |
 
 ### 2.2 后端
 
@@ -217,6 +227,10 @@ code-explain/
 │       │   ├── ConnectorLayer.tsx
 │       │   ├── AnswerBox.tsx
 │       │   ├── anchors.ts      # 字符偏移 ↔ Range 互转
+│       │   ├── MarkdownLite.tsx # 回答正文的极简 Markdown（不用 innerHTML）
+│       │   ├── flat.ts         # 导出模式上下文（非 null = 离屏导出视图）
+│       │   ├── ExportStage.tsx # 导出用的 1:1 无交互视图
+│       │   ├── exportPng.ts    # 量高度 → 算外接框 → 栅格化 → 下载
 │       │   ├── workspace.ts    # 首屏加载画布、首次示例问答注入
 │       │   └── layout.ts       # 避让与自动整理
 │       ├── ai/                 # M4：提问→落库→流式回答的编排（ask.ts）
@@ -535,7 +549,7 @@ git push -u origin main
 | **M3 画布持久化** ✅ | 多画布 CRUD、jsonb 快照、`version` 乐观锁、前端防抖自动保存 | 刷新不丢内容；两标签页同改触发 409 并有「重新加载 / 以我为准」两个出口 |
 | **M4 AI 问答** ✅ | Provider 抽象、SSRF 校验、加密存储、SSE | DeepSeek 单预设 + 自定义 base_url；Key 掩码回显；内网地址被拒；流式增量落库；`AI_NOT_CONFIGURED` 自动弹出设置 |
 | **M5 上线** ✅ | GitHub push → Vercel **单容器**（非双项目） | 线上 <https://code-explain-nine.vercel.app> 走通注册→登录→建画布→自动保存 |
-| **M6 打磨** | 代码高亮、导出 PNG、性能虚拟化 | 200 个节点下拖动不掉帧 |
+| **M6 打磨** | 代码高亮、导出 PNG ✅、性能虚拟化 | 导出：内容完整、四边留白一致、2× 分辨率；性能：200 个节点下拖动不掉帧（**未做**，仍全量渲染） |
 
 **顺序纪律**：M0.5 不过，不写业务代码。M0 手感没被确认，不做 M1。
 
@@ -580,6 +594,11 @@ git push -u origin main
       `deepseek-reasoner` 的 `reasoning_content` 目前不展示（只取 `content`），要不要显示「思考中」
 - [ ] 回答框目前是纯文本渲染 Markdown 源文（`**`、`` ` `` 可见）。
       要做得更好需要一个「只处理 code/bold/list/inline-code」的小渲染器，**禁止 dangerouslySetInnerHTML**
+- [x] **M6 导出 PNG**：`canvas/flat.ts`（导出模式上下文）+ `canvas/ExportStage.tsx`（离屏视图）+
+      `canvas/exportPng.ts`（量高度 → 算内容外接框 → 离屏渲染 → `html-to-image` 栅格化 → 下载），
+      工具栏加「导出 PNG」按钮。实测：1560×464 逻辑尺寸、2× 输出 3120×928，四边留白 49~53px，
+      高亮带间距 80px = 2 行 × 20px，与屏幕锚点完全一致
+- [ ] 性能虚拟化：视口外的回答框仍全量渲染，节点多了拖动会重排全部 DOM（M6 未做部分）
 
 ### M4 已验证的行为（回归基线）
 

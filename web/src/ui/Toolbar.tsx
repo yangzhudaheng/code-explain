@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useCanvas } from '../store/canvasStore';
 import { PATTERNS, swatchStyle, TONES } from '../canvas/background';
+import { exportCanvasPng } from '../canvas/exportPng';
 import { AiSettings } from './AiSettings';
 
 export function Toolbar() {
   const [open, setOpen] = useState(false);
   const [bgOpen, setBgOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [tip, setTip] = useState('');
   const [code, setCode] = useState('');
   const [title, setTitle] = useState('Solution.java');
   const [lang, setLang] = useState('java');
@@ -69,6 +72,21 @@ export function Toolbar() {
     setOpen(false);
   };
 
+  const doExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setTip('');
+    try {
+      await exportCanvasPng();
+    } catch (e) {
+      // 导出失败必须说清原因：空画布和「浏览器拒绝」的处理方式完全不同
+      setTip(e instanceof Error ? e.message : '导出失败，请重试');
+      window.setTimeout(() => setTip(''), 4000);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
       <div className="toolbar" onPointerDown={(e) => e.stopPropagation()}>
@@ -79,6 +97,16 @@ export function Toolbar() {
         <button className="tb-btn" onClick={arrangeAll} title="重排所有未锁定的回答框">
           整理
         </button>
+        <span className="tb-sep" />
+        <button
+          className="tb-btn"
+          onClick={() => void doExport()}
+          disabled={exporting}
+          title="把整张画布（含代码、连线、回答）导出为 PNG"
+        >
+          {exporting ? '导出中…' : '导出 PNG'}
+        </button>
+        {tip && <span className="tb-tip">{tip}</span>}
         <span className="tb-sep" />
         <div className="tb-bg-wrap">
           <button

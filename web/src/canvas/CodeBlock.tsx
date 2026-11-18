@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CodeBlockModel, Question, Rect4 } from '../model/types';
 import { useCanvas } from '../store/canvasStore';
 import { measureAnchor } from './anchors';
+import { useFlat } from './flat';
 import { tokenize } from './highlight';
 
 interface Props {
@@ -30,6 +31,9 @@ export function CodeBlock({ block, questions }: Props) {
   const refreshAnchors = useCanvas((s) => s.refreshAnchors);
   const hoverQid = useCanvas((s) => s.hoverQid);
   const zoom = useCanvas((s) => s.docs[s.activeId].viewport.zoom);
+  const flat = useFlat();
+  /** 画布缩小时把边框加粗到 1/zoom，保证视觉上始终是 1px；导出视图恒为 1 */
+  const unit = flat ? 1 : 1 / zoom;
 
   const rootRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
@@ -104,7 +108,8 @@ export function CodeBlock({ block, questions }: Props) {
   blockRef.current = block;
 
   useLayoutEffect(() => {
-    if (editing) return;
+    // 导出视图里的这层副本不该反过来改 store：锚点几何只由屏幕上的那份负责
+    if (editing || flat) return;
     const blockEl = rootRef.current;
     const pre = blockEl?.querySelector('pre') as HTMLElement | null;
     const bodyEl = blockEl?.querySelector('.block-body') as HTMLElement | null;
@@ -129,7 +134,7 @@ export function CodeBlock({ block, questions }: Props) {
 
     if (Object.keys(patch).length === 0) return;
     refreshAnchors(block.id, patch);
-  }, [block.id, block.content, block.language, editing, sig, zoom, refreshAnchors]);
+  }, [block.id, block.content, block.language, editing, flat, sig, zoom, refreshAnchors]);
 
   const onTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
@@ -169,7 +174,7 @@ export function CodeBlock({ block, questions }: Props) {
         top: block.y,
         width: block.width,
         // 缩放时保持 1px 边框视觉宽度，避免放大后粗得难看
-        borderWidth: 1 / zoom,
+        borderWidth: unit,
       }}
     >
       <div className="block-head" onPointerDown={onHeadDown}>
@@ -307,7 +312,7 @@ export function CodeBlock({ block, questions }: Props) {
                     top: r.top,
                     width: r.width,
                     height: r.height,
-                    borderWidth: 2 / zoom,
+                    borderWidth: 2 * unit,
                   }}
                 />
               )),

@@ -1,4 +1,5 @@
 import { bezierPoint, BOX_WIDTH, connectorOpacity, DEFAULT_BOX_H } from './layout';
+import { useFlat } from './flat';
 import { useCanvas } from '../store/canvasStore';
 import type { CodeBlockModel, Question, Side } from '../model/types';
 
@@ -35,6 +36,7 @@ export function ConnectorLayer() {
   const hoverQid = useCanvas((s) => s.hoverQid);
   const setHover = useCanvas((s) => s.setHover);
   const zoom = useCanvas((s) => s.docs[s.activeId].viewport.zoom);
+  const flat = useFlat();
 
   const counts = new Map<string, number>();
   for (const q of questions) {
@@ -63,12 +65,20 @@ export function ConnectorLayer() {
 
   return (
     <>
-      <svg className="connector-svg" width="1" height="1">
+      {/*
+        屏幕上的 svg 是 1×1 + overflow visible 的技巧；导出时要按画布尺寸铺开，
+        否则栅格化时 <foreignObject> 只保留 svg 自己的 viewport，连线全被裁掉。
+      */}
+      <svg
+        className="connector-svg"
+        width={flat ? flat.width : 1}
+        height={flat ? flat.height : 1}
+      >
         {questions.map((q) => {
           const g = geom.get(q.id)!;
           const base = connectorOpacity(counts.get(q.blockId) ?? 1);
-          const active = hoverQid === q.id;
-          const dimmed = hoverQid !== null && !active;
+          const active = !flat && hoverQid === q.id;
+          const dimmed = !flat && hoverQid !== null && !active;
           const opacity = dimmed ? 0.12 : active ? 1 : base;
 
           return (
@@ -82,15 +92,17 @@ export function ConnectorLayer() {
                 opacity={opacity}
                 markerEnd="url(#arrow-head)"
               />
-              <path
-                d={g.path}
-                className="connector-hit"
-                fill="none"
-                stroke="transparent"
-                strokeWidth={14}
-                onMouseEnter={() => setHover(q.id)}
-                onMouseLeave={() => setHover(null)}
-              />
+              {!flat && (
+                <path
+                  d={g.path}
+                  className="connector-hit"
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={14}
+                  onMouseEnter={() => setHover(q.id)}
+                  onMouseLeave={() => setHover(null)}
+                />
+              )}
             </g>
           );
         })}
@@ -130,7 +142,7 @@ export function ConnectorLayer() {
             labelPos = { x: p.x, y: p.y };
           }
         }
-        const active = hoverQid === q.id;
+        const active = !flat && hoverQid === q.id;
         const label = q.text.length > 12 ? `${q.text.slice(0, 12)}…` : q.text;
 
         return (
@@ -141,10 +153,10 @@ export function ConnectorLayer() {
               left: labelPos.x,
               top: labelPos.y,
               // 标签逆缩放：无论画布放大缩小，问题文本始终保持可读字号
-              transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+              transform: `translate(-50%, -50%) scale(${flat ? 1 : 1 / zoom})`,
             }}
-            onMouseEnter={() => setHover(q.id)}
-            onMouseLeave={() => setHover(null)}
+            onMouseEnter={flat ? undefined : () => setHover(q.id)}
+            onMouseLeave={flat ? undefined : () => setHover(null)}
             title={q.text}
           >
             {label}

@@ -1775,3 +1775,43 @@ button {
   background: #eef2f9;
   color: #27529c;
 }
+
+/* ---------- 导出 PNG ---------- */
+
+/*
+ * 导出视图挂在 body 下、屏幕外渲染。不能用 opacity/visibility 隐藏：
+ * html-to-image 会把计算样式一并序列化，隐藏了就等于导出一张透明图。
+ */
+.export-host {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.export-stage {
+  position: relative;
+  overflow: hidden;
+}
+
+/* 作品里不该出现操作按钮和「可选中提问」这类界面提示 */
+.export-stage .block-actions,
+.export-stage .block-meta,
+.export-stage .answer-actions {
+  display: none;
+}
+
+.tb-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tb-tip {
+  max-width: 200px;
+  font-size: 10.5px;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
